@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Shield, CheckCircle, XCircle, Edit3, Clock, AlertTriangle, Train } from 'lucide-react';
+import { Shield, CheckCircle, XCircle, Edit3, AlertTriangle, Train } from 'lucide-react';
 import { GOLDEN_JOINT_BLOCK, GOLDEN_DEMANDS } from '../data/seedData';
 import type { ControllerAction } from '../types';
 
@@ -73,7 +73,7 @@ export default function ControllerPage() {
 
           {/* Included Demands */}
           <h3 className="dashboard__section-title">Included Demands</h3>
-          {GOLDEN_DEMANDS.map((d, i) => (
+          {GOLDEN_DEMANDS.map(d => (
             <div key={d.id} className="card" style={{ marginBottom: 'var(--space-2)', borderLeft: `3px solid ${d.department === 'Civil' ? 'var(--civil-primary)' : d.department === 'S&T' ? 'var(--snt-primary)' : 'var(--trd-primary)'}` }}>
               <div className="card__body" style={{ padding: 'var(--space-3) var(--space-4)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
@@ -89,7 +89,7 @@ export default function ControllerPage() {
 
           {/* Train Impact */}
           <h3 className="dashboard__section-title" style={{ marginTop: 'var(--space-4)' }}>Affected Trains</h3>
-          {GOLDEN_JOINT_BLOCK.affected_trains.map(t => (
+          {GOLDEN_JOINT_BLOCK.affected_trains.map((t: any) => (
             <div key={t.train_id} className="card" style={{ marginBottom: 'var(--space-2)' }}>
               <div className="card__body" style={{ padding: 'var(--space-3) var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                 <Train size={16} style={{ color: '#F4A460', flexShrink: 0 }} />

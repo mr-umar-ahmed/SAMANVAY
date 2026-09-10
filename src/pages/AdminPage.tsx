@@ -1,4 +1,4 @@
-import { Settings, Shield, Clock, Hash, User, ChevronRight } from 'lucide-react';
+import { Shield, Hash, User } from 'lucide-react';
 import { DEMO_AUDIT_LOG, DEMO_USERS } from '../data/seedData';
 import { ROLE_LABELS } from '../types';
 
@@ -38,14 +38,14 @@ export default function AdminPage() {
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 'var(--text-xs)', fontWeight: 700, flexShrink: 0,
                 }}>
-                  {user.name.split(' ').map(n => n[0]).join('')}
+                  {user.name.split(' ').map((n: string) => n[0]).join('')}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>{user.name}</div>
                   <div style={{ fontSize: '10px', opacity: 0.5 }}>{user.designation}</div>
                 </div>
                 <span className="badge badge--violet" style={{ fontSize: '9px' }}>
-                  {ROLE_LABELS[user.role]}
+                  {ROLE_LABELS[user.role as keyof typeof ROLE_LABELS]}
                 </span>
               </div>
             ))}
@@ -110,7 +110,7 @@ export default function AdminPage() {
                     </td>
                     <td style={{ padding: 'var(--space-2) var(--space-3)', fontWeight: 600 }}>{user?.name || entry.user_id}</td>
                     <td style={{ padding: 'var(--space-2) var(--space-3)' }}>
-                      <span className="badge badge--violet" style={{ fontSize: '8px' }}>{ROLE_LABELS[entry.user_role]}</span>
+                      <span className="badge badge--violet" style={{ fontSize: '8px' }}>{ROLE_LABELS[entry.user_role as keyof typeof ROLE_LABELS]}</span>
                     </td>
                     <td style={{ padding: 'var(--space-2) var(--space-3)', fontWeight: 600 }}>
                       {entry.action.replace(/_/g, ' ')}

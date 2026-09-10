@@ -10,12 +10,6 @@ function parseTime(t: string): number {
   return h * 60 + m;
 }
 
-function formatTime(mins: number): string {
-  const h = Math.floor(((mins % 1440) + 1440) % 1440 / 60);
-  const m = ((mins % 1440) + 1440) % 1440 % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
 const TRAIN_COLORS: Record<string, string> = {
   rajdhani: '#E53935',
   shatabdi: '#1E88E5',
@@ -135,7 +129,7 @@ export default function StringChartPage() {
 
     // Train paths
     TRAINS.forEach(train => {
-      const pathData: [number, number][] = train.path.map(p => {
+      const pathData: [number, number][] = train.path.map((p: any) => {
         let mins = parseTime(p.departure || p.arrival);
         if (train.path[0] && parseTime(train.path[0].departure || train.path[0].arrival) > 20 * 60 && mins < 6 * 60) {
           mins += 1440; // wrap past midnight
@@ -240,7 +234,7 @@ export default function StringChartPage() {
             {GOLDEN_JOINT_BLOCK.solver_rationale}
           </p>
           <div style={{ marginTop: 'var(--space-3)', display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-            {GOLDEN_JOINT_BLOCK.affected_trains.map(t => (
+            {GOLDEN_JOINT_BLOCK.affected_trains.map((t: any) => (
               <div key={t.train_id} style={{
                 padding: 'var(--space-2) var(--space-3)', background: 'var(--status-proposed-bg)',
                 borderRadius: 'var(--radius-md)', fontSize: 'var(--text-xs)',

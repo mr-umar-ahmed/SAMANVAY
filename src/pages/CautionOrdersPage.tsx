@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, Printer, Download, AlertTriangle, CheckCircle2, Shield, QrCode } from 'lucide-react';
+import { FileText, Printer, Download, QrCode } from 'lucide-react';
 import { GOLDEN_CAUTION_ORDER } from '../data/seedData';
 import { AshokaEmblem, IndianRailwaysLogo } from '../components/layout/Emblems';
 import { soundFx } from '../utils/audio';
@@ -188,7 +188,7 @@ export default function CautionOrdersPage() {
           <div style={{ marginBottom: 'var(--space-5)' }}>
             <span className="label">Integrated Stakeholder Departments</span>
             <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-1)', flexWrap: 'wrap' }}>
-              {GOLDEN_CAUTION_ORDER.departments_notified.map(d => (
+              {GOLDEN_CAUTION_ORDER.departments_notified.map((d: string) => (
                 <span key={d} className={`badge ${d === 'Civil' ? 'badge--civil' : d === 'S&T' ? 'badge--snt' : 'badge--trd'}`} style={{ padding: '4px 12px', fontSize: 11 }}>
                   &bull; {d} Department Acknowledged
                 </span>

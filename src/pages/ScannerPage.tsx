@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
-  Camera, MapPin, AlertTriangle, CheckCircle, Eye, Upload, Crosshair,
-  Shield, Compass, Battery, Wifi, Gauge, ArrowRight, Zap, RefreshCw,
-  Send, FileText, CheckCircle2, ChevronRight, Sliders, Volume2
+  Camera, MapPin, AlertTriangle, Eye, Upload, Crosshair,
+  Compass, Battery, Wifi, Gauge, Zap, RefreshCw,
+  Send, CheckCircle2, ChevronRight, Sliders
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { soundFx } from '../utils/audio';
@@ -108,7 +108,7 @@ export default function ScannerPage({ language = 'bilingual' }: ScannerPageProps
   // Micro compass drift effect
   useEffect(() => {
     const timer = setInterval(() => {
-      setCompassHeading(prev => 176 + Math.floor(Math.random() * 5));
+      setCompassHeading(176 + Math.floor(Math.random() * 5));
     }, 2000);
     return () => clearInterval(timer);
   }, []);

@@ -1,4 +1,4 @@
-import { MapPin, Layers, Wifi } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { STATIONS } from '../data/seedData';
 
 export default function CorridorPage() {

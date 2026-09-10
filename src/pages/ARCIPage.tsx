@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { GOLDEN_DEMANDS, GOLDEN_ARCI_BREAKDOWNS, ADDITIONAL_DEMANDS } from '../data/seedData';
+import { GOLDEN_DEMANDS, GOLDEN_ARCI_BREAKDOWNS } from '../data/seedData';
 import { DEFAULT_ARCI_WEIGHTS, type ARCIWeights } from '../types';
 import { SlidersHorizontal, Info } from 'lucide-react';
-
-const ALL_DEMANDS = [...GOLDEN_DEMANDS, ...ADDITIONAL_DEMANDS].sort((a, b) => b.arci_score - a.arci_score);
 
 const COMPONENT_LABELS: Record<keyof ARCIWeights, { label: string; color: string }> = {
   failure_probability: { label: 'Failure Probability', color: '#EF5350' },

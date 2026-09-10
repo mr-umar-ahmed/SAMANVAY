@@ -1,4 +1,4 @@
-import { Layers, ArrowRight, Clock, MinusCircle, CheckCircle, Zap, Shield } from 'lucide-react';
+import { Layers, ArrowRight, MinusCircle, CheckCircle } from 'lucide-react';
 import { GOLDEN_DEMANDS, GOLDEN_JOINT_BLOCK, BUNDLING_COMPARISON } from '../data/seedData';
 
 export default function BundlerPage() {
