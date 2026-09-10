@@ -1,0 +1,216 @@
+/* ================================================================
+   SAMANVAY — National Sovereign Header Styles (Zero-Blue Warm Aesthetic)
+   ================================================================ */
+
+.gov-header-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.gov-masthead {
+  background: linear-gradient(180deg, #120A09 0%, #1C1210 100%);
+  border-bottom: 1px solid var(--border-gold, rgba(245, 158, 11, 0.25));
+  padding: 4px 12px;
+  color: #F5F0E6;
+}
+
+.theme-gov-light .gov-masthead {
+  background: linear-gradient(180deg, #271916 0%, #3E2723 100%);
+  border-bottom: 1px solid var(--border-gold, rgba(245, 158, 11, 0.3));
+  color: #FFFFFF;
+}
+
+.theme-gov-contrast .gov-masthead {
+  background: #000000;
+  border-bottom: 2px solid #FEF08A;
+  color: #FEF08A;
+}
+
+.gov-masthead__container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1600px;
+  margin: 0 auto;
+  gap: 12px;
+}
+
+.gov-masthead__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.gov-masthead__emblem {
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.4));
+}
+
+.gov-masthead__hierarchy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.gov-masthead__titles-hi {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #FDE68A;
+  letter-spacing: 0.02em;
+}
+
+.gov-masthead__titles-en {
+  font-size: 9px;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: 0.06em;
+  opacity: 0.95;
+}
+
+.gov-masthead__division {
+  font-size: 8.5px;
+  color: #D4B2BE;
+  font-weight: 500;
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .gov-masthead__division {
+    display: block;
+  }
+}
+
+.gov-masthead__center {
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (min-width: 900px) {
+  .gov-masthead__center {
+    display: flex;
+  }
+}
+
+.gov-telemetry-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #E2E8F0;
+  white-space: nowrap;
+}
+
+.gov-telemetry-badge--clock {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.gov-telemetry-label {
+  font-size: 9px;
+  font-weight: 800;
+  color: #10B981;
+  letter-spacing: 0.05em;
+}
+
+.gov-telemetry-time {
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+.gov-telemetry-date {
+  font-size: 9.5px;
+  color: #D4B2BE;
+}
+
+.gov-telemetry-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gov-telemetry-dot--green {
+  background: #10B981;
+  box-shadow: 0 0 8px #10B981;
+  animation: pulse 2s infinite;
+}
+
+.gov-telemetry-icon--green {
+  color: #10B981;
+}
+
+.gov-telemetry-icon--cyan {
+  color: #F59E0B;
+}
+
+.gov-masthead__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.gov-security-badge {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(220, 38, 38, 0.2);
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  color: #F87171;
+  display: none;
+}
+
+@media (min-width: 600px) {
+  .gov-security-badge {
+    display: inline-block;
+  }
+}
+
+.gov-control-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #F8FAFC;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease-out;
+}
+
+.gov-control-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.gov-control-btn--icon-only {
+  padding: 5px;
+  border-radius: var(--radius-full);
+}
+
+.gov-control-btn__icon {
+  font-size: 11px;
+}
+
+.gov-icon--gold {
+  color: #FBBF24;
+}
+
+.gov-icon--cyan {
+  color: #F59E0B;
+}
