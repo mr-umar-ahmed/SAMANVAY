@@ -7,7 +7,7 @@ import type {
   Station, Train, MaintenanceDemand, JointBlock,
   KPIMetrics, IncidentReport, CautionOrder, DisruptionEvent,
   RecoveryPlan, AuditEntry, User, ARCIBreakdown,
-} from './types';
+} from '../types';
 
 // ── Corridor Stations ─────────────────────────────────────────────
 export const STATIONS: Station[] = [

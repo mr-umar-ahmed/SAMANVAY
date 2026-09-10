@@ -1,106 +1,96 @@
 /* ================================================================
    SAMANVAY — Design System
    AI-Powered Automatic Block Planning for Indian Railways
+   SIH 2026 · Problem Statement ID: 26027 · Ministry of Railways
    ================================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 
-/* ── Design Tokens ─────────────────────────────────────────────── */
+/* ── Design Tokens (SAMANVAY Official Palette) ───────────────────── */
 :root {
-  /* Government of India & Indian Railways Sovereignty Colors (Zero-Blue Aesthetic System) */
+  /* 8 Flagship Tokens per Specification */
+  --deep-charcoal: #111614;      /* Workstation base background & high-contrast canvas */
+  --surface-panel: #191F1C;      /* Structural sidebars, toolbars & modal backdrops */
+  --dark-olive: #343927;         /* High-priority hero cards & active nav state pills */
+  --forest-green: #4B655C;       /* Primary action buttons & clear signal aspects */
+  --muted-sage: #738166;         /* 1px structural borders, grid lines & secondary text */
+  --warm-stone: #A8A174;         /* Station chainage codes, telemetry & mono metrics */
+  --rust-accent: #872D1C;        /* Strictly for emergency TSRs, alarms & IMR flaws */
+  --editorial-light: #FFFFFF;    /* High-clarity white surfaces for charts & KPI cards */
+
+  /* Government of India & Indian Railways Sovereignty Colors */
   --tiranga-saffron: #FF9933;
   --tiranga-white: #FFFFFF;
   --tiranga-green: #138808;
   --velvet-plum: #7A284C;
   --velvet-plum-soft: #9D3862;
-  --velvet-plum-accent: #C0527B;
-  --rose-mauve: #D4B2BE;
   --railway-gold: #F59E0B;
   --railway-gold-light: #FDE68A;
-  --railway-maroon: #800000;
-
-  /* Primary Palette (from provided color cards) */
-  --deep-espresso: #3E2723;
-  --crimson-violet: #9D3862; /* Velvet Plum Rose */
-  --petal-reverie: #F4C9D6;
-  --ivory-hearth: #F5F0E6;
-  --clouded-periwinkle: #D4B2BE; /* Rose Mauve */
-  --apricot-silk: #FFEDD5;
-
-  /* Extended Palette */
-  --espresso-light: #5D4037;
-  --espresso-hover: #4E342E;
-  --violet-deep: #7A284C;
-  --violet-soft: #E8A2B8;
-  --petal-light: #FAE4EC;
-  --ivory-warm: #FAF6EE;
-  --ivory-pure: #FFFFFF;
 
   /* Department Semantic Colors (Zero Blue) */
-  --civil-primary: #A85A48; /* Warm Terracotta Cocoa */
-  --civil-bg: #FBEFEA;
-  --civil-badge: #F2D3C8;
-  --snt-primary: #8B5CF6; /* Royal Amethyst Violet */
-  --snt-bg: #F5F3FF;
-  --snt-badge: #DDD6FE;
-  --trd-primary: #F59E0B; /* Imperial Amber Gold */
-  --trd-bg: #FFFBEB;
-  --trd-badge: #FDE68A;
+  --civil-primary: #A85A48;      /* Warm Terracotta Cocoa (TMS Track) */
+  --civil-bg: rgba(168, 90, 72, 0.14);
+  --civil-badge: #A85A48;
+  --snt-primary: #8B5CF6;        /* Royal Amethyst Violet (SMMS Signal) */
+  --snt-bg: rgba(139, 92, 246, 0.14);
+  --snt-badge: #8B5CF6;
+  --trd-primary: #A8A174;        /* Warm Stone / OHE Traction (TDMS) */
+  --trd-bg: rgba(168, 161, 116, 0.14);
+  --trd-badge: #A8A174;
 
-  /* Status Colors */
-  --status-proposed: #F28C28;
-  --status-proposed-bg: #FFF3E0;
-  --status-approved: #43A047;
-  --status-approved-bg: #E8F5E9;
-  --status-critical: #E85D5D;
-  --status-critical-bg: #FFEBEE;
-  --status-info: #D97706; /* Warm Amber */
-  --status-info-bg: #FFF8E1;
-  --status-clearing: #AB47BC;
-  --status-clearing-bg: #F3E5F5;
+  /* Operational Status Colors */
+  --status-proposed: #F59E0B;
+  --status-proposed-bg: rgba(245, 158, 11, 0.12);
+  --status-approved: #4B655C;
+  --status-approved-bg: rgba(75, 101, 92, 0.15);
+  --status-critical: #872D1C;
+  --status-critical-bg: rgba(135, 45, 28, 0.18);
+  --status-info: #A8A174;
+  --status-info-bg: rgba(168, 161, 116, 0.14);
+  --status-clearing: #7A284C;
+  --status-clearing-bg: rgba(122, 40, 76, 0.16);
 
   /* Block Execution States */
   --block-planned: var(--status-info);
   --block-protected: var(--status-proposed);
   --block-inprogress: var(--status-approved);
   --block-clearing: var(--status-clearing);
-  --block-closed: var(--deep-espresso);
+  --block-closed: var(--deep-charcoal);
 
   /* ARCI Risk Gradient */
-  --arci-low: #66BB6A;
-  --arci-moderate: #FFA726;
-  --arci-high: #EF5350;
-  --arci-critical: #B71C1C;
+  --arci-low: #4B655C;
+  --arci-moderate: #A8A174;
+  --arci-high: #F59E0B;
+  --arci-critical: #872D1C;
 
-  /* Surface & Elevation (Zero-Blue Aesthetic Dark Mode) */
-  --surface-0: #1C1210;
-  --surface-1: #140C0A;
-  --surface-2: #261815;
-  --surface-3: #36231E;
-  --surface-glass: rgba(28, 18, 16, 0.92);
-  --surface-glass-card: rgba(38, 24, 21, 0.88);
-  --surface-glass-dark: rgba(20, 12, 10, 0.96);
+  /* Surface & Elevation (High-Contrast Editorial Dark Theme) */
+  --surface-0: #191F1C;
+  --surface-1: #111614;
+  --surface-2: #212824;
+  --surface-3: #2A332E;
+  --surface-glass: rgba(25, 31, 28, 0.94);
+  --surface-glass-card: rgba(33, 40, 36, 0.90);
+  --surface-glass-dark: rgba(17, 22, 20, 0.96);
 
-  --text-primary: #F5F0E6;
-  --text-secondary: #E8D4C8;
-  --text-muted: #B39B8E;
-  --border-color: rgba(244, 201, 214, 0.16);
-  --border-glow: rgba(245, 158, 11, 0.3);
+  --text-primary: #FFFFFF;
+  --text-secondary: #E1E4DC;
+  --text-muted: #A0AA95;
+  --border-color: rgba(115, 129, 102, 0.28);
+  --border-glow: rgba(168, 161, 116, 0.4);
 
   /* Shadows */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.7);
-  --shadow-glow-violet: 0 0 24px rgba(157, 56, 98, 0.3);
-  --shadow-glow-gold: 0 0 24px rgba(245, 158, 11, 0.25);
-  --shadow-glow-cyan: 0 0 24px rgba(232, 162, 184, 0.3);
-  --shadow-glow-petal: 0 0 20px rgba(244, 201, 214, 0.3);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.65);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.75);
+  --shadow-glow-olive: 0 0 24px rgba(52, 57, 39, 0.4);
+  --shadow-glow-green: 0 0 20px rgba(75, 101, 92, 0.35);
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-heading: 'Outfit', -apple-system, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 
   --text-xs: 0.6875rem;    /* 11px */
   --text-sm: 0.8125rem;    /* 13px */
@@ -132,19 +122,18 @@
   --space-10: 2.5rem;
   --space-12: 3rem;
   --space-16: 4rem;
-  --space-20: 5rem;
 
-  /* Borders */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  --radius-2xl: 28px;
+  /* Controlled Rounded Geometry per Specification */
+  --radius-sm: 8px;        /* Buttons, inputs, search fields */
+  --radius-md: 14px;       /* Sub-metric pods, urgent task cards */
+  --radius-lg: 20px;       /* Major hero surfaces and chart stages */
+  --radius-xl: 24px;
+  --radius-pill: 9999px;   /* Status badges and signal pips */
   --radius-full: 9999px;
 
-  --border-subtle: 1px solid rgba(62, 39, 35, 0.08);
-  --border-medium: 1px solid rgba(62, 39, 35, 0.14);
-  --border-strong: 2px solid var(--deep-espresso);
+  --border-subtle: 1px solid rgba(115, 129, 102, 0.2);
+  --border-medium: 1px solid rgba(115, 129, 102, 0.35);
+  --border-strong: 2px solid var(--forest-green);
 
   /* Transitions */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -154,10 +143,10 @@
   --duration-slow: 400ms;
 
   /* Layout */
-  --sidebar-width: 260px;
+  --sidebar-width: 270px;
   --sidebar-collapsed: 64px;
   --navbar-height: 60px;
-  --max-content-width: 1400px;
+  --max-content-width: 1520px;
 }
 
 /* ── Global Reset & Base ───────────────────────────────────────── */
@@ -627,5 +616,102 @@ a:hover {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 4px;
+}
+
+/* ── SAMANVAY Editorial Productivity Workstation Cards ───────────── */
+.card--editorial {
+  background: var(--editorial-light, #FFFFFF);
+  color: #111614;
+  border: 1px solid #E1E4DC;
+  border-radius: var(--radius-lg, 20px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.card--editorial:hover {
+  border-color: var(--muted-sage);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.card--hero-dark {
+  background: linear-gradient(135deg, #191F1C 0%, #343927 100%);
+  color: #FFFFFF;
+  border: 1px solid rgba(168, 161, 116, 0.35);
+  border-radius: var(--radius-lg, 20px);
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.card--panel {
+  background: var(--surface-panel, #191F1C);
+  border: 1px solid rgba(115, 129, 102, 0.25);
+  border-radius: var(--radius-md, 14px);
+  color: #FFFFFF;
+}
+
+/* ── SAMANVAY Action Buttons ─────────────────────────────────────── */
+.btn--forest {
+  background: var(--forest-green, #4B655C);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-sm, 8px);
+  font-weight: 700;
+  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.btn--forest:hover {
+  background: #3c524a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(75, 101, 92, 0.4);
+}
+
+.btn--rust {
+  background: var(--rust-accent, #872D1C);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-sm, 8px);
+  font-weight: 700;
+  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.btn--rust:hover {
+  background: #6e2315;
+  box-shadow: 0 4px 12px rgba(135, 45, 28, 0.4);
+}
+
+/* ── SAMANVAY Palette Badges ─────────────────────────────────────── */
+.badge--dark-olive {
+  background: rgba(52, 57, 39, 0.8);
+  color: #E1E4DC;
+  border: 1px solid var(--muted-sage);
+}
+
+.badge--forest-green {
+  background: rgba(75, 101, 92, 0.25);
+  color: #8be0c3;
+  border: 1px solid var(--forest-green);
+}
+
+.badge--warm-stone {
+  background: rgba(168, 161, 116, 0.2);
+  color: #E8E2BC;
+  border: 1px solid var(--warm-stone);
+}
+
+.badge--rust {
+  background: rgba(135, 45, 28, 0.25);
+  color: #F87171;
+  border: 1px solid var(--rust-accent);
 }
 

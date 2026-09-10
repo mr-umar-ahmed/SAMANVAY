@@ -1,5 +1,3 @@
-import React from 'react';
-
 // ── State Emblem of India (Ashoka Lion Capital) ──────────────────────
 export function AshokaEmblem({ size = 32, className = '' }: { size?: number; className?: string }) {
   return (

@@ -20,32 +20,32 @@ export default function MobileBottomNav({ onToggleSidebar, language = 'bilingual
 
   const navItems = [
     {
-      id: 'dashboard',
+      id: 'overview',
       path: '/',
       icon: <LayoutDashboard size={20} />,
-      labelEn: 'Dashboard',
-      labelHi: 'डैशबोर्ड',
+      labelEn: 'Overview',
+      labelHi: 'विहंगावलोकन',
     },
     {
-      id: 'scanner',
-      path: '/scanner',
-      icon: <Camera size={20} />,
-      labelEn: 'AI Scanner',
-      labelHi: 'स्कैनर',
-    },
-    {
-      id: 'bundler',
-      path: '/bundler',
+      id: 'weekly',
+      path: '/weekly',
       icon: <Layers size={20} />,
-      labelEn: 'Bundler',
-      labelHi: 'बंडलिंग',
+      labelEn: 'Weekly Gantt',
+      labelHi: 'साप्ताहिक',
+    },
+    {
+      id: 'live-corridor',
+      path: '/live-corridor',
+      icon: <Camera size={20} />,
+      labelEn: 'Live GIS',
+      labelHi: 'लाइव ट्विन',
     },
     {
       id: 'caution-orders',
       path: '/caution-orders',
       icon: <FileText size={20} />,
       labelEn: 'Caution',
-      labelHi: 'सतर्कता',
+      labelHi: 'सतर्कता T/409B',
     },
   ];
 
