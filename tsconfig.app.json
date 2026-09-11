@@ -2,9 +2,9 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "es2023",
-    "lib": ["ES2023", "DOM"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
     "module": "esnext",
-    "types": ["vite/client"],
+    "types": ["vite/client", "vite-plugin-pwa/client"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 
@@ -16,7 +16,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* The planning engine is plain ES-module JavaScript (isomorphic, also run by node --test) */
+    "allowJs": true,
+    "checkJs": false,
+
     /* Linting */
+    "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

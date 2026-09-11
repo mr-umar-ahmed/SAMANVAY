@@ -1,0 +1,54 @@
+.palette {
+  position: fixed;
+  left: 50%;
+  top: 12vh;
+  transform: translateX(-50%);
+  width: min(640px, calc(100vw - 24px));
+  max-height: 70vh;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: rise-in 160ms var(--ease) both;
+}
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-3);
+}
+.palette-input input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--fs-md);
+  color: var(--ink);
+}
+.palette-list { overflow-y: auto; padding: 6px; }
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+}
+.palette-item.active { background: var(--bg-2); }
+.palette-kind {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--pastel-gray);
+  color: var(--on-gray);
+  display: grid;
+  place-items: center;
+  flex: none;
+}

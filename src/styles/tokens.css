@@ -1,0 +1,184 @@
+/* ================================================================
+   SAMANVAY design tokens
+   Palette rules (from the deck): white page, dark text #111111,
+   pastel blocks (blue, lavender, yellow, pink, green, gray),
+   orange / red / green accents used sparingly (< 5 %),
+   no gradients, no dark or textured backgrounds, 6–12 px radii.
+   Department and chart colours were validated with the dataviz
+   palette validator (CVD ΔE ≥ 8, contrast ≥ 3:1) in both modes.
+   ================================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* Typography */
+  --font-ui: 'Inter', 'Noto Sans Devanagari', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  /* Surfaces */
+  --bg: #ffffff;              /* page */
+  --bg-1: #ffffff;            /* cards */
+  --bg-2: #f7f7f7;            /* table heads, wells, hover */
+  --bg-3: #ededed;            /* deck light gray */
+  --line: #e6e6e6;            /* hairline */
+  --line-2: #d6d6d6;          /* stronger border */
+  --overlay: rgba(17, 17, 17, 0.42);
+
+  /* Ink */
+  --ink: #111111;
+  --ink-2: #4b5563;
+  --ink-3: #6b7280;
+  --ink-4: #9ca3af;
+  --ink-on-accent: #111111;
+
+  /* Deck pastels (backgrounds) and the text tone that sits on each */
+  --pastel-blue: #edf5fd;      --on-blue: #1e3a8a;
+  --pastel-lavender: #d9dbfd;  --on-lavender: #3b2f8f;
+  --pastel-yellow: #f7ecd7;    --on-yellow: #7a3e00;
+  --pastel-pink: #f1d5db;      --on-pink: #8b1e2d;
+  --pastel-green: #cce9cd;     --on-green: #1b5e20;
+  --pastel-gray: #ededed;      --on-gray: #333333;
+
+  /* Accents (deck) */
+  --accent: #f28c28;          /* orange – primary action */
+  --accent-hover: #e07d1a;
+  --accent-soft: #fdebd9;
+  --ok: #43a047;
+  --ok-soft: #cce9cd;
+  --warn: #f28c28;
+  --warn-soft: #f7ecd7;
+  --crit: #e85d5d;
+  --crit-soft: #f1d5db;
+  --info: #2f6fde;
+  --info-soft: #edf5fd;
+
+  /* Department identity (validated categorical slots, fixed order) */
+  --tms: #2e7d32;   --tms-soft: #cce9cd;   --on-tms: #1b5e20;
+  --smms: #2f6fde;  --smms-soft: #edf5fd;  --on-smms: #1e3a8a;
+  --tdms: #d9700f;  --tdms-soft: #f7ecd7;  --on-tdms: #7a3e00;
+  --coa: #7e57c2;   --coa-soft: #d9dbfd;   --on-coa: #3b2f8f;
+  --fois: #b08900;  --fois-soft: #f7ecd7;  --on-fois: #7a3e00;
+
+  /* Train classes on diagrams */
+  --train-vb: #111111;
+  --train-prem: #b08900;
+  --train-pass: #5b6470;
+  --train-goods: #9ca3af;
+
+  /* Chart chrome */
+  --grid: #e6e6e6;
+  --axis: #c9c9c9;
+  --series-1: #2f6fde;
+  --series-2: #d9700f;
+  --series-3: #2e7d32;
+  --series-4: #7e57c2;
+  --series-5: #b08900;
+
+  /* Geometry */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgba(17, 17, 17, 0.06);
+  --shadow: 0 4px 16px rgba(17, 17, 17, 0.08);
+  --shadow-lg: 0 16px 40px rgba(17, 17, 17, 0.14);
+
+  /* Layout */
+  --sidebar-w: 248px;
+  --topbar-h: 56px;
+  --content-max: 1440px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 160ms;
+
+  /* Type scale */
+  --fs-xs: 11px;
+  --fs-sm: 12.5px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+  --fs-hero: 40px;
+}
+
+/* Night operations theme — opt-in. Same hues re-stepped for the dark surface. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #15181c;
+  --bg-1: #1b1f24;
+  --bg-2: #22272e;
+  --bg-3: #2a3038;
+  --line: #2a3038;
+  --line-2: #3a414b;
+  --overlay: rgba(0, 0, 0, 0.6);
+
+  --ink: #f3f4f6;
+  --ink-2: #c3cad3;
+  --ink-3: #98a2ae;
+  --ink-4: #6b7480;
+  --ink-on-accent: #111111;
+
+  --pastel-blue: #1b2a3f;      --on-blue: #a9c8f5;
+  --pastel-lavender: #262547;  --on-lavender: #c3bff5;
+  --pastel-yellow: #3a2e1a;    --on-yellow: #f2c78d;
+  --pastel-pink: #3d2226;      --on-pink: #f0a3ad;
+  --pastel-green: #1f3323;     --on-green: #9fd8a3;
+  --pastel-gray: #2a2d31;      --on-gray: #d1d5db;
+
+  --accent: #f28c28;
+  --accent-hover: #f79a45;
+  --accent-soft: #3a2e1a;
+  --ok: #43a047;   --ok-soft: #1f3323;
+  --warn: #f28c28; --warn-soft: #3a2e1a;
+  --crit: #e85d5d; --crit-soft: #3d2226;
+  --info: #5b8def; --info-soft: #1b2a3f;
+
+  --tms: #43a047;   --tms-soft: #1f3323;   --on-tms: #9fd8a3;
+  --smms: #5b8def;  --smms-soft: #1b2a3f;  --on-smms: #a9c8f5;
+  --tdms: #d27a22;  --tdms-soft: #3a2e1a;  --on-tdms: #f2c78d;
+  --coa: #9a7bea;   --coa-soft: #262547;   --on-coa: #c3bff5;
+  --fois: #b08a14;  --fois-soft: #3a2e1a;  --on-fois: #f2c78d;
+
+  --train-vb: #ffffff;
+  --train-prem: #e0b23a;
+  --train-pass: #a9b4c2;
+  --train-goods: #6b7480;
+
+  --grid: #2a3038;
+  --axis: #3a414b;
+  --series-1: #5b8def;
+  --series-2: #d27a22;
+  --series-3: #43a047;
+  --series-4: #9a7bea;
+  --series-5: #b08a14;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Sunlight theme — outdoor field use: pure white ground, black ink, strong hairlines. */
+:root[data-theme='sunlight'] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-1: #ffffff;
+  --bg-2: #f2f2f2;
+  --bg-3: #e2e2e2;
+  --line: #bdbdbd;
+  --line-2: #8a8a8a;
+  --ink: #000000;
+  --ink-2: #1f2937;
+  --ink-3: #374151;
+  --ink-4: #6b7280;
+  --on-blue: #0f2a6b; --on-lavender: #2a1f73; --on-yellow: #5a2d00; --on-pink: #6b1220; --on-green: #0f4a14; --on-gray: #111111;
+  --fs-base: 15px;
+  --fs-sm: 13.5px;
+  --fs-xs: 12px;
+  --shadow-sm: none;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+:root[data-theme='sunlight'] .btn { height: 44px; font-weight: 600; border-width: 1.5px; }
+:root[data-theme='sunlight'] .btn-sm { height: 36px; }
+:root[data-theme='sunlight'] .btn-lg { height: 56px; font-size: 17px; }
+:root[data-theme='sunlight'] .card { border-width: 1.5px; }
