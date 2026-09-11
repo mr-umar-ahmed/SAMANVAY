@@ -367,3 +367,17 @@
   .citizen-content { padding: 28px 16px 40px; }
   .citizen-bottom { position: static; max-width: 720px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius-lg); }
 }
+
+/* ── Top bar at laptop widths: keep the page title readable ── */
+.shell-title { flex: 1 1 140px; }
+@media (max-width: 1320px) {
+  .shell-corridor .caps { display: none; }
+  .shell-search { min-width: 0; }
+  .shell-search .kbd { display: none; }
+  .shell-corridor .select { max-width: 190px; }
+}
+@media (max-width: 1180px) {
+  .shell-user > span:not(.shell-avatar),
+  .shell-user > svg { display: none; }
+  .shell-search span { display: none; }
+}

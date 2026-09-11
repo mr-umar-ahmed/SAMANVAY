@@ -108,7 +108,8 @@ export function AppShell() {
   const pageTitle = current ? current.label[lang === 'hi' ? 'hi' : 'en'] : meta.label[lang === 'hi' ? 'hi' : 'en'];
   const engineTone = status === 'ready' ? 'ok' : status === 'error' ? 'crit' : 'warn';
   const engineText = status === 'ready' ? t('engineReady') : status === 'error' ? t('engineError') : status === 'running' ? t('engineRunning') : t('engineIdle');
-  const kpi = snapshot?.result.weekly.kpis;
+  // all blocks in the week (line closures and disconnection-only), the same count Send-to-Control and hand-off use
+  const weekBlocks = snapshot?.result.weekly.ai.blocks.length;
   const showReplan = portal !== 'field' && portal !== 'citizen';
   const otherPortals = useMemo(() => PORTAL_ORDER.filter((p) => p !== portal && p !== 'citizen'), [portal]);
   const canSwitch = user?.role === 'DRM' || user?.role === 'ADMIN';
@@ -154,7 +155,7 @@ export function AppShell() {
           <div className="row small" title={progress}>
             <span className={`dot dot-${engineTone} ${status === 'running' ? 'dot-live' : ''}`} />
             <span className="grow truncate">{engineText}</span>
-            {kpi && <span className="tiny muted num">{kpi.blockCount} {t('blocks').toLowerCase()}</span>}
+            {weekBlocks != null && <span className="tiny muted num">{weekBlocks} {t('blocks').toLowerCase()}</span>}
           </div>
           <div className="row" style={{ gap: 6 }}>
             <button className="btn btn-sm btn-ghost" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title={t('theme')} data-tour="theme">
