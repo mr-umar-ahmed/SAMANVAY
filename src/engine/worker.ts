@@ -25,7 +25,7 @@ function serialiseOcc(dayOccs: OccInternal[], corridor: Snapshot['corridor']): D
 }
 
 self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
-  const { id, corridorId, weights, rules, iterations, scenario, seed, pinnedTaskIds = [], excludedTaskIds = [] } = ev.data;
+  const { id, corridorId, weights, rules, iterations, scenario, seed, pinnedTaskIds = [], excludedTaskIds = [], fixedBlocks = [] } = ev.data;
   const post = (m: DistributiveOmit<WorkerMessage, 'id'>) => self.postMessage({ id, ...m } as WorkerMessage);
   const t0 = Date.now();
   try {
@@ -58,7 +58,7 @@ self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
     // references a work that was just excluded (buildMonthly expands its entries).
     if (excludedTaskIds.length || pinnedTaskIds.length) ctx.rolling = buildRolling(ctx);
     post({ type: 'progress', step: 'weekly', text: 'Optimising the weekly plan (greedy construction + simulated annealing)' });
-    const result = runPlanning(ctx, { weights, rules, iterations });
+    const result = runPlanning(ctx, { weights, rules, iterations, fixedBlocks });
     post({ type: 'progress', step: 'monthly', text: 'Monthly plan and 26-week programme assembled' });
 
     const strip = <T extends { dayOccs?: unknown }>(p: T) => {

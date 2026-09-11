@@ -1,4 +1,4 @@
-import type { Corridor, Rules, Scenario, Snapshot, Task, Weights, WeeklyResult, MonthlyResult, Rolling, InjectSpec } from './types';
+import type { Corridor, Rules, Scenario, Snapshot, Task, Weights, WeeklyResult, MonthlyResult, Rolling, InjectSpec, FixedBlockConstraint } from './types';
 
 export const DEFAULT_PLAN_START: string;
 export function parsePlanStart(s?: string): Date;
@@ -57,7 +57,7 @@ export interface PlanningResult {
 
 export function runPlanning(
   ctx: PlanningContext,
-  opts?: { weights?: Partial<Weights>; rules?: Partial<Rules>; iterations?: number; seed?: number }
+  opts?: { weights?: Partial<Weights>; rules?: Partial<Rules>; iterations?: number; seed?: number; fixedBlocks?: FixedBlockConstraint[] }
 ): PlanningResult;
 
 export function applyScenario(corridor: Corridor, feeds: PlanningContext['feeds'], scenario: Scenario, planStart: Date): PlanningContext['feeds'];

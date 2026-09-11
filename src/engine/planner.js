@@ -51,10 +51,10 @@ export function createContext(corridorId, { seed = 26027, planStart = DEFAULT_PL
 }
 
 /** Run all horizons. */
-export function runPlanning(ctx, { weights = {}, rules = {}, iterations, seed } = {}) {
+export function runPlanning(ctx, { weights = {}, rules = {}, iterations, seed, fixedBlocks = [] } = {}) {
   const w = { ...DEFAULT_WEIGHTS, ...weights };
   const r = { ...RULES, ...rules };
-  const weekly = buildWeekly(ctx, { weights: w, rules: r, iterations, seed });
+  const weekly = buildWeekly(ctx, { weights: w, rules: r, iterations, seed, fixedBlocks });
   const monthly = buildMonthly(ctx, { weights: w, rules: r, iterations: iterations ? Math.round(iterations * 0.6) : undefined, seed });
   return { weekly, monthly, rolling: ctx.rolling, weights: w, rules: r };
 }
@@ -183,6 +183,8 @@ function injectTasks(corridor, list, factors) {
       workingDaysNeeded: 1,
       metrics: { detectedBy: 'Field report (scenario)', flawType: spec.note || 'Field-reported defect', gmt: 40 },
       nativeLocation: `${spec.line || 'DN'} line, km ${startKm}–${endKm}`,
+      groupId: spec.groupId || null,
+      targetBlock: spec.targetBlock || null,
       injected: true
     };
   });

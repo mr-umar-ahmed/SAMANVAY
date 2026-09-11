@@ -581,6 +581,17 @@ export interface InjectSpec {
   note?: string;
   ageDays?: number;
   conditionIndex?: number;
+  groupId?: string | null;
+  targetBlock?: { day: number; line: Line; start: number; end: number } | null;
+}
+
+export interface FixedBlockConstraint {
+  id?: string;
+  day: number;
+  line: Line;
+  start: number;
+  end: number;
+  taskIds: string[];
 }
 
 export interface Scenario {
@@ -607,6 +618,8 @@ export interface PlanRequest {
   pinnedTaskIds?: string[];
   /** dropped before ranking (attended, withdrawn) */
   excludedTaskIds?: string[];
+  /** started or locked blocks held fixed as solver constraints during re-planning */
+  fixedBlocks?: FixedBlockConstraint[];
 }
 
 export type WorkerMessage =

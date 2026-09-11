@@ -37,7 +37,14 @@ const incompatible = new Set(INCOMPATIBLE_PAIRS.map(([a, b]) => `${a}|${b}`).con
 /* Candidate generation                                                      */
 /* ------------------------------------------------------------------------ */
 
-function candidatesFor(task, dayOccs, rules, days) {
+function candidatesFor(task, dayOccs, rules, days, fixedAssign) {
+  if (fixedAssign && fixedAssign.has(task.id)) {
+    return [{ ...fixedAssign.get(task.id) }];
+  }
+  if (task.targetBlock) {
+    const tb = task.targetBlock;
+    return [{ day: tb.day, line: tb.line, start: tb.start, end: Math.min(tb.end, tb.start + task.totalMin), gap: tb.end - tb.start }];
+  }
   const out = [];
   const lines = task.line === 'BOTH' ? ['BOTH'] : [task.line];
   for (let d = 0; d < days; d++) {
@@ -328,7 +335,7 @@ function makeEvaluator(ctx) {
 /* Search                                                                    */
 /* ------------------------------------------------------------------------ */
 
-export function planHorizon({ corridor, feeds, tasks, days, planStart, weights = DEFAULT_WEIGHTS, rules = RULES, iterations = 6000, seed = 7, allowPremium = false, label = 'plan' }) {
+export function planHorizon({ corridor, feeds, tasks, days, planStart, weights = DEFAULT_WEIGHTS, rules = RULES, iterations = 6000, seed = 7, allowPremium = false, label = 'plan', fixedBlocks = [] }) {
   const t0 = Date.now();
   const w = { ...DEFAULT_WEIGHTS, ...weights };
   const r = { ...RULES, ...rules };
@@ -336,7 +343,25 @@ export function planHorizon({ corridor, feeds, tasks, days, planStart, weights =
   for (let d = 0; d < days; d++) dayOccs.push(buildDayOccupancy(corridor, feeds, d, planStart));
   const tasksById = new Map(tasks.map((t) => [t.id, t]));
   const tsrLoss = new Map(tasks.map((t) => [t.id, tsrLossPerDay(t, dayOccs[0], corridor)]));
-  const cands = new Map(tasks.map((t) => [t.id, candidatesFor(t, dayOccs, r, days)]));
+
+  const fixedAssignments = new Map();
+  if (Array.isArray(fixedBlocks) && fixedBlocks.length > 0) {
+    for (const b of fixedBlocks) {
+      const tids = Array.isArray(b.taskIds) ? b.taskIds : (b.tasks ? b.tasks.map((t) => t.id) : []);
+      for (const tid of tids) {
+        fixedAssignments.set(tid, {
+          day: b.day,
+          line: b.line,
+          start: b.start,
+          end: b.end,
+          gap: b.end - b.start,
+          fixed: true
+        });
+      }
+    }
+  }
+
+  const cands = new Map(tasks.map((t) => [t.id, candidatesFor(t, dayOccs, r, days, fixedAssignments)]));
   const ctx = { dayOccs, rules: r, weights: w, tasksById, machines: feeds.machines, crews: feeds.crews, days, tsrLoss, allowPremium };
   const { cost } = makeEvaluator(ctx);
   const rng = createRng(seed);
@@ -346,6 +371,11 @@ export function planHorizon({ corridor, feeds, tasks, days, planStart, weights =
   const assign = new Map(tasks.map((t) => [t.id, null]));
   let current = cost(assign);
   for (const t of order) {
+    if (fixedAssignments.has(t.id)) {
+      assign.set(t.id, { ...fixedAssignments.get(t.id) });
+      current = cost(assign);
+      continue;
+    }
     let best = null;
     let bestCost = current; // staying deferred
     for (const c of cands.get(t.id)) {
@@ -378,6 +408,7 @@ export function planHorizon({ corridor, feeds, tasks, days, planStart, weights =
       current = bestCost;
     }
     const id = rng.pick(ids);
+    if (fixedAssignments.has(id)) continue;
     const t = tasksById.get(id);
     const prev = assign.get(id);
     const cs = cands.get(id);

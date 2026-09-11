@@ -18,7 +18,7 @@ import { RULES, WORK_TYPES, MACHINE_TYPES } from './constants.js';
 
 export function buildWeekly(ctx, opts = {}) {
   const tasks = ctx.tasks.filter((t) => !t.capital);
-  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 7, planStart: ctx.planStart, weights: opts.weights, rules: opts.rules };
+  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 7, planStart: ctx.planStart, weights: opts.weights, rules: opts.rules, fixedBlocks: opts.fixedBlocks };
   const ai = planHorizon({ ...common, iterations: opts.iterations ?? 6000, seed: opts.seed ?? 7, label: 'weekly-ai' });
   const baseline = planBaseline({ ...common, label: 'weekly-baseline' });
   const tsrLossPerDay = Object.fromEntries(tasks.map((t) => [t.id, ctx.tsrLossPerDay[t.id] || 0]));

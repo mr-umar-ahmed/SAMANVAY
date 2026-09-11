@@ -402,7 +402,18 @@ function Replan({ snapshot, reportId }: { snapshot: Snapshot; reportId: string |
   /* ── actions ───────────────────────────────────────────── */
   const run = async () => {
     const ev = buildEvent();
-    const patch: CandidatePatch = { scenario: mergeScenario(ev.scenario, ev.label) };
+    const fixedBlocks = contextBlocks.map((b) => ({
+      id: b.id,
+      day: b.day,
+      line: b.line,
+      start: b.start,
+      end: b.end,
+      taskIds: b.tasks.map((t) => t.id),
+    }));
+    const patch: CandidatePatch = {
+      scenario: mergeScenario(ev.scenario, ev.label),
+      fixedBlocks,
+    };
     await runCandidate(patch, t('reason', { event: ev.label }));
     const s = useAppStore.getState();
     if (s.candidateStatus === 'error') toast({ title: t('runFailed'), body: s.candidateError ?? undefined, tone: 'crit' });

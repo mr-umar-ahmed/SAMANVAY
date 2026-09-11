@@ -105,6 +105,9 @@ const strings = {
     jointTitle: 'Joint block suggestions',
     jointSub: 'Works that fit an existing block of another department on the same section and line.',
     openBlock: 'Open block',
+    acceptJoin: 'Accept join',
+    acceptJoinHint: 'Co-locate this work into the block and re-plan',
+    joinAccepted: 'Joint block accepted',
     requestJoin: 'Request join',
     requestJoinHint: 'Sends the suggestion to the planning cell',
     joinRequested: 'Join request sent to the planning cell',
@@ -189,6 +192,9 @@ const strings = {
     jointTitle: 'संयुक्त block सुझाव',
     jointSub: 'वे कार्य जो उसी सेक्शन व लाइन पर किसी दूसरे विभाग के मौजूदा block में समा सकते हैं।',
     openBlock: 'Block खोलें',
+    acceptJoin: 'संयुक्त ब्लॉक स्वीकारें',
+    acceptJoinHint: 'इस कार्य को ब्लॉक में शामिल कर पुनः योजना बनाएं',
+    joinAccepted: 'संयुक्त ब्लॉक स्वीकृत',
     requestJoin: 'जोड़ने का अनुरोध',
     requestJoinHint: 'सुझाव योजना प्रकोष्ठ को भेजता है',
     joinRequested: 'जोड़ने का अनुरोध योजना प्रकोष्ठ को भेजा गया',
@@ -228,8 +234,9 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
   const planVersion = useAppStore((s) => s.planVersion);
   const runPlan = useAppStore((s) => s.runPlan);
   const proposeBlocks = useAppStore((s) => s.proposeBlocks);
-  const concur = useAppStore((s) => s.concur);
   const pinTask = useAppStore((s) => s.pinTask);
+  const acceptJointBlock = useAppStore((s) => s.acceptJointBlock);
+  const concur = useAppStore((s) => s.concur);
   const notify = useAppStore((s) => s.notify);
   const toast = useAppStore((s) => s.toast);
 
@@ -330,6 +337,11 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
     if (!portalDept || !canConcur) return;
     concur(b.id, portalDept);
     toast({ title: t('concurred', { id: b.id }), body: `${b.sectionText} · ${b.startText}–${b.endText}`, tone: 'ok' });
+  };
+
+  const handleAcceptJoin = async (j: JointSuggestion) => {
+    await acceptJointBlock({ task: j.task, block: j.block });
+    toast({ title: t('joinAccepted'), body: `${j.task.id} → ${j.block.id}`, tone: 'ok' });
   };
 
   const handleRequestJoin = (j: JointSuggestion) => {
@@ -687,6 +699,11 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
                       <button type="button" className="btn btn-sm" onClick={() => drawer.open('block', j.block.id, { close: 'task' })}>
                         <Link2 size={12} /> {t('openBlock')}
                       </button>
+                      {canPlan ? (
+                        <button type="button" className="btn btn-sm btn-primary" disabled={running} title={t('acceptJoinHint')} onClick={() => handleAcceptJoin(j)}>
+                          <Users size={12} /> {t('acceptJoin')}
+                        </button>
+                      ) : null}
                       {mode === 'edit' ? (
                         <button type="button" className="btn btn-sm" disabled={!canPlan || running} title={canPlan ? t('pinHint') : t('runHint')} onClick={() => handlePin(j.task)}>
                           <Pin size={12} /> {t('pin')}
