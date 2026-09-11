@@ -9,7 +9,9 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "node --test tests/",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "check-honesty": "node scripts/check-honesty.js",
+    "check-contrast": "node scripts/check-contrast.js"
   },
   "dependencies": {
     "@types/d3": "^7.4.3",
