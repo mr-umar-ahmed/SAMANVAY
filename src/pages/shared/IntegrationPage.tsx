@@ -331,8 +331,10 @@ export default function IntegrationPage({ readOnly = false }: IntegrationPagePro
   const planVersion = useAppStore((s) => s.planVersion);
   const user = useAppStore((s) => s.user);
   const audit = useAppStore((s) => s.audit);
+  const dataIssueStatus = useAppStore((s) => s.dataIssueStatus);
+  const assignDataIssue = useAppStore((s) => s.assignDataIssue);
+  const resolveDataIssue = useAppStore((s) => s.resolveDataIssue);
   const runPlan = useAppStore((s) => s.runPlan);
-  const addAudit = useAppStore((s) => s.addAudit);
   const notify = useAppStore((s) => s.notify);
   const toast = useAppStore((s) => s.toast);
 
@@ -367,7 +369,7 @@ export default function IntegrationPage({ readOnly = false }: IntegrationPagePro
 
   const issues: IssueRow[] = useMemo(() => {
     if (!snapshot) return [];
-    // audit is newest first: the first hit per key is the current state
+    // audit is newest first: fallback for historical logs
     const last = new Map<string, string>();
     const assigned = new Map<string, string>();
     for (const e of audit) {
@@ -377,10 +379,19 @@ export default function IntegrationPage({ readOnly = false }: IntegrationPagePro
     }
     return snapshot.issues.map((i) => {
       const key = `${i.id} · ${i.issue}`;
-      const a = last.get(key);
-      return { ...i, key, dept: asDept(i.source), ...classify(i.issue), state: a === ISSUE_RESOLVED ? 'RESOLVED' : a === ISSUE_ASSIGNED ? 'ASSIGNED' : 'OPEN', assignedTo: assigned.get(key) ?? null };
+      const direct = dataIssueStatus?.[key];
+      const a = direct ? direct.state : last.get(key);
+      const assignedTo = direct ? (direct.assignedTo ?? null) : (assigned.get(key) ?? null);
+      return {
+        ...i,
+        key,
+        dept: asDept(i.source),
+        ...classify(i.issue),
+        state: a === 'RESOLVED' || a === ISSUE_RESOLVED ? 'RESOLVED' : a === 'ASSIGNED' || a === ISSUE_ASSIGNED ? 'ASSIGNED' : 'OPEN',
+        assignedTo,
+      };
     });
-  }, [snapshot, audit]);
+  }, [snapshot, audit, dataIssueStatus]);
 
   const graph: GraphRow[] = useMemo(() => {
     if (!snapshot) return [];
@@ -417,13 +428,13 @@ export default function IntegrationPage({ readOnly = false }: IntegrationPagePro
 
   const assign = (i: IssueRow) => {
     if (!i.dept) return;
-    addAudit({ action: ISSUE_ASSIGNED, entityType: 'plan', entityId: i.key, detail: i.dept });
+    assignDataIssue(i.key, i.dept);
     notify({ portals: [i.dept.toLowerCase() as PortalId], dept: i.dept, kind: 'ACTION', title: `Data-quality issue on ${i.id}`, body: i.issue, route: `/app/${i.dept.toLowerCase()}/register` });
     toast({ title: t('toastAssigned', { id: i.id, dept: DEPT_LABEL[i.dept].short }), tone: 'ok' });
   };
 
   const resolve = (i: IssueRow) => {
-    addAudit({ action: ISSUE_RESOLVED, entityType: 'plan', entityId: i.key, detail: i.assignedTo ?? undefined });
+    resolveDataIssue(i.key);
     toast({ title: t('toastResolved', { id: i.id }), tone: 'ok' });
   };
 

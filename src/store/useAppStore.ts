@@ -14,7 +14,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { runPlan as runPlanInWorker } from '../engine/client';
 import { DEFAULT_WEIGHTS, RULES } from '../engine/constants.js';
 import { DEFAULT_ROI_ASSUMPTIONS } from '../engine/roi.js';
-import type { Dept, ExecutionLogRecord, InjectSpec, Kpis, KpiDelta, Line, PlanRequest, Rules, Scenario, Snapshot, Weights } from '../engine/types';
+import type { Dept, ExecutionLogRecord, FixedBlockConstraint, InjectSpec, Kpis, KpiDelta, Line, PlanRequest, Rules, Scenario, Snapshot, Task, Weights } from '../engine/types';
 import type { PortalId, SessionUser } from '../auth/portals';
 import type { Lang } from '../i18n';
 
@@ -276,6 +276,7 @@ export interface CandidatePatch {
   scenario?: ScenarioState | null;
   pinnedTaskIds?: string[];
   excludedTaskIds?: string[];
+  fixedBlocks?: FixedBlockConstraint[];
 }
 
 export interface Candidate {
@@ -435,6 +436,14 @@ export interface AppState {
   setRoiAssumptions: (a: Partial<RoiAssumptions>) => void;
   resetRoiAssumptions: () => void;
 
+  // data quality issues
+  dataIssueStatus: Record<string, { state: 'OPEN' | 'ASSIGNED' | 'RESOLVED'; assignedTo?: Dept | null; resolvedAt?: string }>;
+  assignDataIssue: (issueKey: string, dept: Dept) => void;
+  resolveDataIssue: (issueKey: string) => void;
+
+  // joint blocks
+  acceptJointBlock: (arg: { task: Task; block: { id: string; day: number; line: Line; start: number; end: number; departments: string[] } }) => Promise<void>;
+
   // toasts (ephemeral)
   toasts: Toast[];
   toast: (t: Omit<Toast, 'id'>) => void;
@@ -507,6 +516,7 @@ function buildRequest(s: AppState, patch: CandidatePatch = {}): PlanRequest {
     scenario,
     pinnedTaskIds: patch.pinnedTaskIds ?? s.pinnedTaskIds,
     excludedTaskIds: patch.excludedTaskIds ?? s.excludedTaskIds,
+    fixedBlocks: patch.fixedBlocks,
   };
 }
 
@@ -809,7 +819,7 @@ export const useAppStore = create<AppState>()(
       corridorId: DEFAULT_CORRIDOR,
       setCorridor: (id) => {
         if (id === get().corridorId) return;
-        set({ corridorId: id, approvals: {}, executionLog: [], forms: {}, powerBlocks: {}, candidate: null, pinnedTaskIds: [], excludedTaskIds: [], handoverNotes: {} });
+        set({ corridorId: id, approvals: {}, executionLog: [], forms: {}, powerBlocks: {}, candidate: null, pinnedTaskIds: [], excludedTaskIds: [], handoverNotes: {}, dataIssueStatus: {} });
         get().addAudit({ action: 'CORRIDOR_CHANGED', entityType: 'settings', entityId: id });
         void get().runPlan({ reason: 'corridor changed' });
       },
@@ -854,6 +864,68 @@ export const useAppStore = create<AppState>()(
         get().addAudit({ action: 'TASK_CLOSED', entityType: 'task', entityId: id, detail: reason });
       },
       includeTask: (id) => set({ excludedTaskIds: get().excludedTaskIds.filter((x) => x !== id) }),
+
+      /* data quality issues */
+      dataIssueStatus: {},
+      assignDataIssue: (issueKey, dept) => {
+        set((s) => ({
+          dataIssueStatus: {
+            ...s.dataIssueStatus,
+            [issueKey]: { state: 'ASSIGNED', assignedTo: dept },
+          },
+        }));
+        get().addAudit({ action: 'ISSUE_ASSIGNED', entityType: 'plan', entityId: issueKey, detail: dept });
+      },
+      resolveDataIssue: (issueKey) => {
+        set((s) => ({
+          dataIssueStatus: {
+            ...s.dataIssueStatus,
+            [issueKey]: { state: 'RESOLVED', assignedTo: s.dataIssueStatus[issueKey]?.assignedTo ?? null, resolvedAt: now() },
+          },
+        }));
+        get().addAudit({ action: 'ISSUE_RESOLVED', entityType: 'plan', entityId: issueKey });
+      },
+
+      /* joint blocks */
+      acceptJointBlock: async ({ task, block }) => {
+        const s = get();
+        const spec: InjectSpec = {
+          sourceId: `JOINT/${task.id}/${block.id}`,
+          label: `${task.label} (joint block)`,
+          workType: task.workType,
+          line: block.line === 'BOTH' ? (task.line === 'BOTH' ? 'DN' : task.line) : block.line,
+          startKm: task.startKm,
+          endKm: task.endKm,
+          daysOverdue: task.daysOverdue,
+          tsrKmph: task.tsrKmph,
+          groupId: block.id,
+          targetBlock: {
+            day: block.day,
+            line: block.line,
+            start: block.start,
+            end: block.end,
+          },
+          note: `Joint block with ${block.departments.join(' + ')} (${block.id})`,
+        };
+        const excludedTaskIds = s.excludedTaskIds.includes(task.id) ? s.excludedTaskIds : [...s.excludedTaskIds, task.id];
+        const currentScenario = s.scenario?.scenario ?? {};
+        const injectTasks = [...(currentScenario.injectTasks ?? []).filter((it) => it.sourceId !== spec.sourceId), spec];
+        const newScenario: ScenarioState = {
+          presetId: s.scenario?.presetId ?? null,
+          name: s.scenario?.name ? `${s.scenario.name} + Joint ${task.id}` : `Joint ${task.id} into ${block.id}`,
+          params: s.scenario?.params ?? {},
+          scenario: {
+            ...currentScenario,
+            injectTasks,
+          },
+        };
+        set({
+          excludedTaskIds,
+          scenario: newScenario,
+        });
+        get().addAudit({ action: 'JOINT_BLOCK_ACCEPTED', entityType: 'task', entityId: task.id, detail: `Co-located into ${block.id}` });
+        await get().runPlan({ reason: `Joint block accepted: ${task.id} into ${block.id}` });
+      },
 
       intakeTasks: [],
       addIntakeTask: (t) => {
@@ -1257,7 +1329,7 @@ export const useAppStore = create<AppState>()(
       resetDemoData: () => {
         set({
           approvals: {}, executionLog: [], reports: [], intakeTasks: [], requisitions: [], scenario: null, audit: [], readNotifications: [], pushed: [], previousResult: null, candidate: null,
-          forms: {}, tsrs: [], powerBlocks: {}, rbp: { monthly: { status: 'DRAFT' }, rolling: { status: 'DRAFT' } }, jpoNotices: {}, escalations: [], directions: [], handoverNotes: {}, messages: [], acks: [], pinnedTaskIds: [], excludedTaskIds: [], myReportIds: [],
+          forms: {}, tsrs: [], powerBlocks: {}, rbp: { monthly: { status: 'DRAFT' }, rolling: { status: 'DRAFT' } }, jpoNotices: {}, escalations: [], directions: [], handoverNotes: {}, messages: [], acks: [], pinnedTaskIds: [], excludedTaskIds: [], myReportIds: [], dataIssueStatus: {},
         });
         get().resetTuning();
         get().addAudit({ action: 'DEMO_DATA_RESET', entityType: 'settings', entityId: 'all' });
@@ -1320,6 +1392,7 @@ export const useAppStore = create<AppState>()(
         readNotifications: s.readNotifications,
         toursDone: s.toursDone,
         roiAssumptions: s.roiAssumptions,
+        dataIssueStatus: s.dataIssueStatus,
       }),
     }
   )
