@@ -7,7 +7,7 @@
 import { useMemo } from 'react';
 import { generateEventsFromPlan } from '../../engine/eventsFromPlan.js';
 import type { Dept } from '../../engine/types';
-import { can, type PortalId, type SessionUser } from '../../auth/portals';
+import { can, type PortalId } from '../../auth/portals';
 import { useAppStore } from '../../store/useAppStore';
 import { usePortal } from '../../app/usePortal';
 
