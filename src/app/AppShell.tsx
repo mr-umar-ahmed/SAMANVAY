@@ -77,6 +77,11 @@ export function AppShell() {
         e.preventDefault();
         setPaletteOpen((v) => !v);
       }
+      if (e.key === 'Escape') {
+        setNotifOpen(false);
+        setUserOpen(false);
+        setDrawer(false);
+      }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);

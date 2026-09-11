@@ -228,6 +228,13 @@
   .shell-backdrop { position: fixed; inset: 0; background: var(--overlay); z-index: 39; animation: fade-in 160ms both; }
   .shell-content { padding: 16px; padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
   .shell-top { padding: 0 10px; gap: 4px; }
+  .shell-popover {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: calc(var(--topbar-h) + 6px);
+    width: auto;
+  }
   .shell-bottom {
     position: fixed;
     left: 0;

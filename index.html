@@ -26,7 +26,7 @@
         try {
           var raw = localStorage.getItem('samanvay.v4');
           var theme = raw ? (JSON.parse(raw).state || {}).theme : null;
-          if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+          if (theme === 'dark' || theme === 'sunlight') document.documentElement.setAttribute('data-theme', theme);
         } catch (e) {}
       })();
     </script>
