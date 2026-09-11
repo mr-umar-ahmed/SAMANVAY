@@ -7,32 +7,56 @@ import { WORK_TYPES } from './constants.js';
 import { sectionsInRange, oheSectionsInRange } from './corridors.js';
 import { calibratedDuration } from './productivity.js';
 
-export function validateDemand(fields, corridor, factors = {}) {
+export function validateDemand(fields, corridor, factors = {}, opts = {}) {
+  const lang = opts.lang || fields.lang || 'en';
+  const isHi = lang === 'hi';
   const errors = [];
+  const errorDetails = [];
   const wtKey = fields.workType;
   const wt = WORK_TYPES[wtKey];
 
   if (!wt) {
-    errors.push(`Invalid work type: ${wtKey}`);
+    const en = `Invalid work type: ${wtKey}`;
+    const hi = `अमान्य कार्य प्रकार: ${wtKey}`;
+    errors.push(isHi ? hi : en);
+    errorDetails.push({ code: 'WORK_TYPE_INVALID', en, hi });
   }
 
   const startKm = Number(fields.startKm);
   const endKm = Number(fields.endKm || fields.startKm);
 
   if (isNaN(startKm) || startKm < 0 || startKm > corridor.lengthKm) {
-    errors.push(`Start km ${fields.startKm} is outside corridor chainage (0 to ${corridor.lengthKm} km)`);
+    const en = `Start km ${fields.startKm} is outside corridor chainage (0 to ${corridor.lengthKm} km)`;
+    const hi = `प्रारंभिक किमी ${fields.startKm} कॉरिडोर चेनेज (0 से ${corridor.lengthKm} किमी) से बाहर है`;
+    errors.push(isHi ? hi : en);
+    errorDetails.push({ code: 'START_KM_OUT_OF_RANGE', en, hi });
   }
   if (isNaN(endKm) || endKm < startKm || endKm > corridor.lengthKm) {
-    errors.push(`End km ${fields.endKm} must be between start km and ${corridor.lengthKm} km`);
+    const en = `End km ${fields.endKm} must be between start km and ${corridor.lengthKm} km`;
+    const hi = `समाप्ति किमी ${fields.endKm} प्रारंभिक किमी और ${corridor.lengthKm} किमी के बीच होना चाहिए`;
+    errors.push(isHi ? hi : en);
+    errorDetails.push({ code: 'END_KM_INVALID', en, hi });
   }
 
   const line = fields.line || 'DN';
   if (!['UP', 'DN', 'BOTH'].includes(line)) {
-    errors.push(`Line must be UP, DN, or BOTH`);
+    const en = `Line must be UP, DN, or BOTH`;
+    const hi = `लाइन UP, DN या BOTH होनी चाहिए`;
+    errors.push(isHi ? hi : en);
+    errorDetails.push({ code: 'LINE_INVALID', en, hi });
   }
 
   if (errors.length > 0) {
-    return { valid: false, errors, task: null };
+    return {
+      valid: false,
+      errors,
+      errorDetails,
+      localizedErrors: {
+        en: errorDetails.map((e) => e.en),
+        hi: errorDetails.map((e) => e.hi)
+      },
+      task: null
+    };
   }
 
   const secs = sectionsInRange(corridor, startKm, endKm).map((s) => s.index);

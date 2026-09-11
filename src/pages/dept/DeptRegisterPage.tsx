@@ -16,7 +16,7 @@ import { WORK_TYPES, MACHINE_TYPES, CREW_TYPES } from '../../engine/constants.js
 import { validateDemand } from '../../engine/intake.js';
 import { usePortal } from '../../app/usePortal';
 import { can, type PortalId } from '../../auth/portals';
-import { useT } from '../../i18n';
+import { useLang, useT } from '../../i18n';
 import { common } from '../../i18n/common';
 import { DEPT_LABEL, dateLabel, duration, kmRange, num, timeAgo } from '../../lib/format';
 import { ArciBar, Badge, Callout, Card, CardBody, CardHead, DataTable, EmptyState, Field, Modal, PageHeader, PlanPending, StatTile, UrgencyBadge, type Column } from '../../components/ui';
@@ -344,6 +344,7 @@ interface InspForm {
 export default function DeptRegisterPage() {
   const t = useT(strings);
   const tc = useT(common);
+  const lang = useLang();
   const portal = usePortal();
   const dept: Dept = DEPT_OF_PORTAL[portal] ?? 'TMS';
   const drawer = useDrawerParams();
@@ -485,7 +486,7 @@ export default function DeptRegisterPage() {
   const raiseTotal = raise && raiseSpec ? raiseSpec.setupMin + (Number(raise.durationMin) || 0) + raiseSpec.clearanceMin : 0;
   const raiseErrors: string[] = (() => {
     if (!raise) return [];
-    const v = validateDemand({ workType: raise.workType, startKm: raise.startKm, endKm: raise.endKm, line: raise.line, durationMin: raise.durationMin }, corridor, snapshot.factors) as { valid: boolean; errors: string[] };
+    const v = validateDemand({ workType: raise.workType, startKm: raise.startKm, endKm: raise.endKm, line: raise.line, durationMin: raise.durationMin }, corridor, snapshot.factors, { lang }) as { valid: boolean; errors: string[] };
     const errs = [...v.errors];
     const maxMin = snapshot.result.rules.maxBlockMin;
     if (raiseSpec && raise.blockType !== 'DISCONNECTION' && raiseTotal > maxMin) errs.push(t('ceiling', { total: duration(raiseTotal), max: duration(maxMin) }));
