@@ -28,19 +28,20 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
     {
       label: { en: 'Operate', hi: 'संचालन' },
       items: [
-        { route: '/app/control', label: { en: 'Control desk', hi: 'नियंत्रण डेस्क' }, icon: 'home', mobile: true, tour: 'nav-control-desk' },
-        { route: '/app/control/blocks', label: { en: 'Block requests', hi: 'ब्लॉक अनुरोध' }, icon: 'check-square', mobile: true, tour: 'nav-control-blocks' },
-        { route: '/app/control/corridor', label: { en: 'Live corridor', hi: 'लाइव कॉरिडोर' }, icon: 'map', mobile: true },
-        { route: '/app/control/caution', label: { en: 'Caution & TSR desk', hi: 'सतर्कता व TSR डेस्क' }, icon: 'file-text', mobile: true },
-        { route: '/app/control/execution', label: { en: 'Execution log', hi: 'निष्पादन लॉग' }, icon: 'play-circle' },
+        { route: '/app/control/board', label: { en: 'Board', hi: 'बोर्ड' }, icon: 'home', mobile: true, tour: 'nav-control-desk' },
+        { route: '/app/control/programme', label: { en: 'Programme', hi: 'कार्यक्रम' }, icon: 'calendar', mobile: true },
+        { route: '/app/control/map', label: { en: 'Corridor map', hi: 'कॉरिडोर मानचित्र' }, icon: 'map', mobile: true },
         { route: '/app/control/incidents', label: { en: 'Incidents & reports', hi: 'घटनाएँ व रिपोर्ट' }, icon: 'inbox', tour: 'nav-control-incidents' },
-        { route: '/app/control/handoff', label: { en: 'Hand-off & export', hi: 'हैंड-ऑफ़ व निर्यात' }, icon: 'clipboard' },
+        { route: '/app/control/caution', label: { en: 'Caution & TSR desk', hi: 'सतर्कता व TSR डेस्क' }, icon: 'file-text', mobile: true },
       ],
     },
     {
-      label: { en: 'Respond', hi: 'प्रतिक्रिया' },
+      label: { en: 'Respond & Coordinate', hi: 'प्रतिक्रिया व समन्वय' },
       items: [
-        { route: '/app/control/disruptions', label: { en: 'Disruptions & re-plan', hi: 'व्यवधान व पुनर्योजना' }, icon: 'flame' },
+        { route: '/app/control/replan', label: { en: 'Re-plan', hi: 'पुनर्योजना' }, icon: 'flame' },
+        { route: '/app/control/weekly', label: { en: 'Weekly review', hi: 'साप्ताहिक समीक्षा' }, icon: 'calendar-range' },
+        { route: '/app/control/handoff', label: { en: 'Hand-off & export', hi: 'हैंड-ऑफ़ व निर्यात' }, icon: 'clipboard' },
+        { route: '/app/control/log', label: { en: 'Execution log', hi: 'निष्पादन लॉग' }, icon: 'play-circle' },
         { route: '/app/control/copilot', label: { en: 'Copilot', hi: 'कोपायलट' }, icon: 'sparkles' },
       ],
     },
@@ -49,27 +50,22 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
     {
       label: { en: 'Plan', hi: 'योजना' },
       items: [
-        { route: '/app/planning', label: { en: 'Overview', hi: 'अवलोकन' }, icon: 'home', mobile: true, tour: 'nav-planning-overview' },
-        { route: '/app/planning/weekly', label: { en: 'Weekly block plan', hi: 'साप्ताहिक ब्लॉक योजना' }, icon: 'calendar', mobile: true, tour: 'nav-planning-weekly' },
-        { route: '/app/planning/monthly', label: { en: 'Monthly & 26-week', hi: 'मासिक व 26-सप्ताह' }, icon: 'calendar-range', mobile: true },
-        { route: '/app/planning/intake', label: { en: 'Demands & reports', hi: 'माँगें व रिपोर्ट' }, icon: 'inbox' },
-      ],
-    },
-    {
-      label: { en: 'Analyse', hi: 'विश्लेषण' },
-      items: [
+        { route: '/app/planning/overview', label: { en: 'Overview', hi: 'अवलोकन' }, icon: 'home', mobile: true, tour: 'nav-planning-overview' },
+        { route: '/app/planning/demands', label: { en: 'Demands', hi: 'माँगें' }, icon: 'inbox', mobile: true },
         { route: '/app/planning/risk', label: { en: 'Risk & priority (ARCI)', hi: 'जोखिम व प्राथमिकता (ARCI)' }, icon: 'alert-triangle', tour: 'nav-planning-risk' },
+        { route: '/app/planning/weekly', label: { en: 'Weekly plan', hi: 'साप्ताहिक योजना' }, icon: 'calendar', mobile: true, tour: 'nav-planning-weekly' },
+        { route: '/app/planning/monthly', label: { en: 'Monthly & 26-week', hi: 'मासिक व 26-सप्ताह' }, icon: 'calendar-range' },
         { route: '/app/planning/capacity', label: { en: 'Corridor capacity', hi: 'कॉरिडोर क्षमता' }, icon: 'activity' },
-        { route: '/app/planning/integration', label: { en: 'Integration hub', hi: 'एकीकरण हब' }, icon: 'share' },
       ],
     },
     {
-      label: { en: 'Act', hi: 'कार्रवाई' },
+      label: { en: 'Optimise & Hand-off', hi: 'अनुकूलन व हैंड-ऑफ़' },
       items: [
-        { route: '/app/planning/studio', label: { en: 'Optimiser studio', hi: 'ऑप्टिमाइज़र स्टूडियो' }, icon: 'sliders', tour: 'nav-planning-studio' },
-        { route: '/app/planning/scenarios', label: { en: 'Scenario library', hi: 'परिदृश्य पुस्तकालय' }, icon: 'flame' },
+        { route: '/app/planning/optimiser', label: { en: 'Optimiser', hi: 'ऑप्टिमाइज़र' }, icon: 'sliders', tour: 'nav-planning-studio' },
+        { route: '/app/planning/scenarios', label: { en: 'Scenarios', hi: 'परिदृश्य' }, icon: 'flame' },
         { route: '/app/planning/handoff', label: { en: 'BDMS hand-off', hi: 'BDMS हैंड-ऑफ़' }, icon: 'check-square', mobile: true, tour: 'nav-planning-handoff' },
-        { route: '/app/planning/execution', label: { en: 'Execution & adherence', hi: 'निष्पादन व पालन' }, icon: 'play-circle' },
+        { route: '/app/planning/adherence', label: { en: 'Adherence & log', hi: 'पालन व लॉग' }, icon: 'play-circle' },
+        { route: '/app/planning/integration', label: { en: 'Integration', hi: 'एकीकरण' }, icon: 'share' },
         { route: '/app/planning/copilot', label: { en: 'Copilot', hi: 'कोपायलट' }, icon: 'sparkles' },
       ],
     },
@@ -81,18 +77,19 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
     {
       label: { en: 'Division', hi: 'मंडल' },
       items: [
-        { route: '/app/division', label: { en: 'DRM overview', hi: 'DRM अवलोकन' }, icon: 'home', mobile: true, tour: 'nav-division-overview' },
-        { route: '/app/division/roi', label: { en: 'ROI audit', hi: 'ROI ऑडिट' }, icon: 'trending-up', mobile: true, tour: 'nav-division-roi' },
-        { route: '/app/division/programme', label: { en: '26-week programme', hi: '26-सप्ताह कार्यक्रम' }, icon: 'calendar-range', mobile: true },
-        { route: '/app/division/audit', label: { en: 'Approvals & audit', hi: 'स्वीकृतियाँ व ऑडिट' }, icon: 'clipboard', mobile: true },
+        { route: '/app/division/brief', label: { en: 'DRM brief', hi: 'DRM सारांश' }, icon: 'home', mobile: true, tour: 'nav-division-overview' },
+        { route: '/app/division/plans', label: { en: 'Approvals', hi: 'स्वीकृतियाँ' }, icon: 'clipboard', mobile: true },
         { route: '/app/division/escalations', label: { en: 'Escalations', hi: 'एस्केलेशन' }, icon: 'alert-triangle', tour: 'nav-division-escalations' },
+        { route: '/app/division/roi', label: { en: 'ROI audit', hi: 'ROI ऑडिट' }, icon: 'trending-up', mobile: true, tour: 'nav-division-roi' },
+        { route: '/app/division/incidents', label: { en: 'Incidents & hazard reports', hi: 'घटनाएँ व खतरे' }, icon: 'inbox' },
       ],
     },
     {
       label: { en: 'Systems', hi: 'प्रणालियाँ' },
       items: [
-        { route: '/app/division/integration', label: { en: 'Integration health', hi: 'एकीकरण स्थिति' }, icon: 'share' },
-        { route: '/app/division/admin', label: { en: 'Users & settings', hi: 'उपयोगकर्ता व सेटिंग' }, icon: 'settings' },
+        { route: '/app/division/feeds', label: { en: 'Feeds & twin', hi: 'फ़ीड्स व डिजिटल ट्विन' }, icon: 'share' },
+        { route: '/app/division/audit', label: { en: 'Audit trail', hi: 'ऑडिट ट्रेल' }, icon: 'clipboard' },
+        { route: '/app/division/admin', label: { en: 'Admin', hi: 'व्यवस्थापक' }, icon: 'settings' },
       ],
     },
   ],
@@ -100,10 +97,11 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
     {
       label: { en: 'Field', hi: 'फ़ील्ड' },
       items: [
-        { route: '/app/field', label: { en: 'Today', hi: 'आज' }, icon: 'home', mobile: true, tour: 'nav-field-today' },
+        { route: '/app/field/today', label: { en: 'Today', hi: 'आज' }, icon: 'home', mobile: true, tour: 'nav-field-today' },
         { route: '/app/field/report', label: { en: 'Report incident', hi: 'घटना रिपोर्ट' }, icon: 'camera', mobile: true, tour: 'nav-field-report' },
-        { route: '/app/field/caution', label: { en: 'Caution orders', hi: 'सतर्कता आदेश' }, icon: 'file-text', mobile: true },
-        { route: '/app/field/train', label: { en: 'My train', hi: 'मेरी ट्रेन' }, icon: 'train', mobile: true },
+        { route: '/app/field/reports', label: { en: 'My reports', hi: 'मेरी रिपोर्ट' }, icon: 'inbox', mobile: true },
+        { route: '/app/field/caution', label: { en: 'Caution orders', hi: 'सतर्कता आदेश' }, icon: 'file-text', mobile: true, tour: 'nav-field-caution' },
+        { route: '/app/field/train', label: { en: 'My train', hi: 'मेरी ट्रेन' }, icon: 'train' },
       ],
     },
   ],
@@ -111,9 +109,9 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
     {
       label: { en: 'Citizen', hi: 'नागरिक' },
       items: [
-        { route: '/citizen', label: { en: 'Advisories', hi: 'सूचनाएँ' }, icon: 'home', mobile: true },
+        { route: '/citizen', label: { en: 'Home', hi: 'होम' }, icon: 'home', mobile: true },
         { route: '/citizen/report', label: { en: 'Report a hazard', hi: 'खतरे की रिपोर्ट' }, icon: 'camera', mobile: true },
-        { route: '/citizen/my-reports', label: { en: 'My reports', hi: 'मेरी रिपोर्ट' }, icon: 'inbox', mobile: true },
+        { route: '/citizen/reports', label: { en: 'My reports', hi: 'मेरी रिपोर्ट' }, icon: 'inbox', mobile: true },
       ],
     },
   ],
@@ -121,22 +119,24 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
 
 function deptNav(p: 'tms' | 'smms' | 'tdms'): NavGroup[] {
   const base = `/app/${p}`;
+  const formRoute = p === 'tms' ? `${base}/caution` : p === 'smms' ? `${base}/disconnections` : `${base}/powerblocks`;
+  const formLabel = p === 'tms' ? { en: 'Caution & TSR', hi: 'सतर्कता व TSR' } : p === 'smms' ? { en: 'T/351 Disconnections', hi: 'T/351 डिस्कनेक्शन' } : { en: 'Power blocks', hi: 'पावर ब्लॉक' };
   return [
     {
       label: { en: 'Department', hi: 'विभाग' },
       items: [
-        { route: base, label: { en: 'Department desk', hi: 'विभाग डेस्क' }, icon: 'home', mobile: true, tour: 'nav-dept-desk' },
+        { route: `${base}/today`, label: { en: 'Today', hi: 'आज' }, icon: 'home', mobile: true, tour: 'nav-dept-desk' },
         { route: `${base}/register`, label: { en: 'Defect register', hi: 'दोष रजिस्टर' }, icon: 'list', mobile: true, tour: 'nav-dept-register' },
-        { route: `${base}/demand`, label: { en: 'Raise block demand', hi: 'ब्लॉक माँग दर्ज करें' }, icon: 'plus-circle', mobile: true, tour: 'nav-dept-demand' },
-        { route: `${base}/blocks`, label: { en: 'My blocks & concurrence', hi: 'मेरे ब्लॉक व सहमति' }, icon: 'check-square', mobile: true, tour: 'nav-dept-blocks' },
+        { route: `${base}/requisitions`, label: { en: 'Requisitions', hi: 'माँगें' }, icon: 'plus-circle', mobile: true, tour: 'nav-dept-demand' },
+        { route: `${base}/blocks`, label: { en: 'Blocks & concurrence', hi: 'ब्लॉक व सहमति' }, icon: 'check-square', mobile: true, tour: 'nav-dept-blocks' },
       ],
     },
     {
-      label: { en: 'Resources', hi: 'संसाधन' },
+      label: { en: 'Operations', hi: 'संचालन' },
       items: [
-        { route: `${base}/forms`, label: p === 'tms' ? { en: 'Caution & TSR', hi: 'सतर्कता व TSR' } : p === 'smms' ? { en: 'Disconnections (T/351)', hi: 'डिस्कनेक्शन (T/351)' } : { en: 'Power blocks', hi: 'पावर ब्लॉक' }, icon: 'file-text', tour: 'nav-dept-forms' },
+        { route: formRoute, label: formLabel, icon: 'file-text', tour: 'nav-dept-forms' },
+        { route: `${base}/incidents`, label: { en: 'Incidents & reports', hi: 'घटनाएँ व रिपोर्ट' }, icon: 'inbox', tour: 'nav-dept-reports' },
         { route: `${base}/resources`, label: { en: 'Machines & gangs', hi: 'मशीनें व गैंग' }, icon: 'wrench' },
-        { route: `${base}/reports`, label: { en: 'Field & citizen reports', hi: 'फ़ील्ड व नागरिक रिपोर्ट' }, icon: 'inbox', tour: 'nav-dept-reports' },
         { route: `${base}/copilot`, label: { en: 'Copilot', hi: 'कोपायलट' }, icon: 'sparkles' },
       ],
     },

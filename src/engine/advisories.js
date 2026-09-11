@@ -4,6 +4,16 @@
  * Pure isomorphic ES module.
  */
 
+/** ISO week number of a yyyy-mm-dd date (bulletins are numbered by week). */
+function isoWeekOf(iso) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return { year: 0, week: 0 };
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return { year: d.getUTCFullYear(), week: Math.ceil(((d - yearStart) / 86400000 + 1) / 7) };
+}
+
 export function generateBlockAdvisories(weeklyResult, corridor) {
   const blocks = weeklyResult?.ai?.blocks || [];
   const advisories = [];
@@ -16,13 +26,14 @@ export function generateBlockAdvisories(weeklyResult, corridor) {
       trainNo: t.number || t.id,
       name: t.name || 'Train',
       cls: t.cls || 'EXP',
-      expectedDelayMin: t.delayMin || 15,
+      expectedDelayMin: t.delayMin ?? 0,
       impactType: t.mode === 'REGULATED' ? 'Regulated at previous junction' : 'Single-Line Working (SLW) speed restriction'
     }));
 
+    const wk = isoWeekOf(b.date);
     advisories.push({
       id: `ADV-${String(seq).padStart(3, '0')}`,
-      bulletinNo: `IR/SAMANVAY/${corridor.code.replace('–', '-')}/2026-W36-${String(seq).padStart(3, '0')}`,
+      bulletinNo: `IR/SAMANVAY/${corridor.code.replace('–', '-')}/${wk.year}-W${String(wk.week).padStart(2, '0')}-${String(seq).padStart(3, '0')}`,
       blockId: b.id,
       day: b.day,
       dateLabel: b.dateLabel || `Day ${b.day}`,

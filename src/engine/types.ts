@@ -527,6 +527,8 @@ export interface DataIssue {
 }
 
 export interface Snapshot {
+  /** RNG seed the feeds were generated with */
+  seed: number;
   corridor: Corridor;
   planStart: string;
   feeds: {

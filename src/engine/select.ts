@@ -324,7 +324,8 @@ export interface Adherence {
   onTimeStartRate: number;
 }
 
-export function adherence(log: ExecRecord[]): Adherence {
+/** mpsKmph: a clearance at or above line speed is not a TSR (seeded history stores full-speed clearances as MPS). */
+export function adherence(log: ExecRecord[], mpsKmph = Infinity): Adherence {
   const m = computeExecutionMetrics(log.map((r) => ({ status: r.status, plannedSpanMin: r.plannedSpanMin, actualSpanMin: r.actualSpanMin, overrunCause: r.overrunCause }))) as Omit<Adherence, 'clearedWithTsr' | 'onTimeStartRate'> & { totalPlannedMin?: number; totalActualMin?: number };
   const done = log.filter((r) => r.status !== 'IN_PROGRESS');
   const onTime = log.filter((r) => r.actualStart !== undefined && r.actualStart - r.plannedStart <= 10).length;
@@ -337,8 +338,8 @@ export function adherence(log: ExecRecord[]): Adherence {
     totalActualMin: m.totalActualMin ?? 0,
     totalOverrunMin: m.totalOverrunMin,
     overrunCauses: m.overrunCauses,
-    clearedWithTsr: done.filter((r) => r.speedOnLifting).length,
-    onTimeStartRate: log.length ? onTime / log.length : 1,
+    clearedWithTsr: done.filter((r) => r.speedOnLifting != null && r.speedOnLifting < mpsKmph).length,
+    onTimeStartRate: log.length ? onTime / log.length : 0,
   };
 }
 

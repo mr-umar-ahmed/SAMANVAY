@@ -195,3 +195,12 @@ test('scenario: injected IMR flaw is scheduled on day 1 and machine breakdown re
   const r2 = runPlanning(broke, { iterations: 1200 });
   assert.equal(r2.weekly.ai.cost.hard, 0);
 });
+
+test('block ids are unique and stable across identical re-plans', () => {
+  const run = () => runPlanning(createContext('SWR_SBC_JTJ', { seed: 26027 }), { iterations: 400 });
+  const a = run().weekly.ai.blocks.map((b) => b.id);
+  const b = run().weekly.ai.blocks.map((b) => b.id);
+  assert.ok(a.length > 0);
+  assert.equal(new Set(a).size, a.length, 'ids must be unique');
+  assert.deepEqual(a, b, 'same inputs must give the same block ids');
+});

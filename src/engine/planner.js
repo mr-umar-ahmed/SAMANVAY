@@ -130,6 +130,7 @@ export function applyScenario(corridor, feeds, scenario, planStart) {
 import { computeTimings, sectionPassages } from './dataFactory.js';
 import { sectionsInRange, oheSectionsInRange } from './corridors.js';
 import { calibratedDuration } from './productivity.js';
+import { stableHash } from './time.js';
 const scenarioHelpers = { computeTimings, sectionPassages };
 
 function injectTasks(corridor, list, factors) {
@@ -141,7 +142,8 @@ function injectTasks(corridor, list, factors) {
     const durationMin = calibratedDuration(wt.durationMin, spec.workType, factors);
     const daysOverdue = spec.daysOverdue ?? 0;
     return {
-      id: `INJ-${String(i + 1).padStart(2, '0')}`,
+      // stable across runs: derived from the requisition / report that produced it
+      id: spec.sourceId ? `INJ-${stableHash(`${spec.sourceId}|${spec.workType}|${startKm}|${endKm}`)}` : `INJ-${String(i + 1).padStart(2, '0')}`,
       sourceId: spec.sourceId || `FIELD/${spec.workType}/${i + 1}`,
       source: spec.sourceId ? String(spec.sourceId).split('/')[0] : wt.dept,
       dept: wt.dept,

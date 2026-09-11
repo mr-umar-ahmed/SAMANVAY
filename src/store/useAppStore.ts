@@ -93,6 +93,8 @@ export type ReportSource = 'citizen' | 'field' | 'locoPilot';
 
 export interface HazardReport {
   id: string;
+  /** demo record shipped with the build */
+  seeded?: boolean;
   at: string;
   source: ReportSource;
   reporter: { name: string; role: string; portal: PortalId; contact?: string };
@@ -136,6 +138,8 @@ export type BlockType = 'TRAFFIC' | 'POWER' | 'DISCONNECTION' | 'INTEGRATED';
 
 export interface Requisition {
   id: string;
+  /** demo record shipped with the build */
+  seeded?: boolean;
   no: string;
   corridorId: string;
   dept: Dept;
@@ -506,6 +510,277 @@ function buildRequest(s: AppState, patch: CandidatePatch = {}): PlanRequest {
   };
 }
 
+/** Demo reports so the incident queues are not empty on first run (marked seeded: true). */
+export const SEED_REPORTS: HazardReport[] = [
+  {
+    id: 'HZ-1042',
+    seeded: true,
+    at: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
+    source: 'locoPilot',
+    reporter: { name: 'S. K. Verma', role: 'Loco Pilot (Train 12952)', portal: 'field' },
+    trainNumber: '12952',
+    lang: 'en',
+    description: 'Severe vertical track jerk observed at km 234/6 UP while trailing at 120 km/h. Possible weld defect or deep rail dip near Shikohabad.',
+    category: 'track',
+    severity: 'high',
+    km: 234.6,
+    line: 'UP',
+    nearestStation: 'SKB',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'TMS',
+    status: 'UNVERIFIED',
+    history: [{ at: new Date(Date.now() - 42 * 60 * 1000).toISOString(), by: 'S. K. Verma', action: 'RECEIVED', note: 'Reported from cab of 12952 Rajdhani Express' }],
+  },
+  {
+    id: 'HZ-1039',
+    seeded: true,
+    at: new Date(Date.now() - 115 * 60 * 1000).toISOString(),
+    source: 'field',
+    reporter: { name: 'Ram Naresh', role: 'Keyman (Gang 4, Hathras)', portal: 'field' },
+    lang: 'hi',
+    description: 'किमी 164/2 डाउन लाइन पर ग्लूड जॉइंट में इंसुलेशन जलने के लक्षण दिख रहे हैं। ट्रैक सर्किट फ्लिकरिंग हो सकती है।',
+    category: 'signal',
+    severity: 'medium',
+    km: 164.2,
+    line: 'DN',
+    nearestStation: 'HRS',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'SMMS',
+    status: 'TRIAGED',
+    assignee: 'R. P. Singh (SSE/Sig/HRS)',
+    history: [
+      { at: new Date(Date.now() - 115 * 60 * 1000).toISOString(), by: 'Ram Naresh', action: 'RECEIVED', note: 'Reported during morning foot inspection' },
+      { at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), by: 'Chief Controller', action: 'VERIFY', note: 'Verified by Control, routed to SMMS' },
+      { at: new Date(Date.now() - 30 * 60 * 1000).toISOString(), by: 'Sr DSTE Cell', action: 'ASSIGN', note: 'Assigned to R. P. Singh (SSE/Sig/HRS)' },
+    ],
+  },
+  {
+    id: 'HZ-1035',
+    seeded: true,
+    at: new Date(Date.now() - 240 * 60 * 1000).toISOString(),
+    source: 'citizen',
+    reporter: { name: 'Anurag Sharma', role: 'Passenger', portal: 'citizen' },
+    lang: 'en',
+    description: 'Large banyan tree branch dangling within 1.5 metres of overhead catenary wire near Khurja outer signal.',
+    category: 'ohe',
+    severity: 'medium',
+    km: 82.4,
+    line: 'BOTH',
+    nearestStation: 'KRJ',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'TDMS',
+    status: 'TRIAGED',
+    assignee: 'OHE gang, Khurja',
+    history: [
+      { at: new Date(Date.now() - 240 * 60 * 1000).toISOString(), by: 'Anurag Sharma', action: 'RECEIVED', note: 'Citizen mobile hazard report' },
+      { at: new Date(Date.now() - 180 * 60 * 1000).toISOString(), by: 'Section Controller', action: 'VERIFY', note: 'Routed to TDMS for site check' },
+      { at: new Date(Date.now() - 120 * 60 * 1000).toISOString(), by: 'SSE/TRD/KRJ', action: 'ASSIGN', note: 'OHE gang to inspect clearance' },
+    ],
+  },
+  {
+    id: 'HZ-1028',
+    seeded: true,
+    at: new Date(Date.now() - 420 * 60 * 1000).toISOString(),
+    source: 'field',
+    reporter: { name: 'Mahesh Babu', role: 'Gateman (LC-81)', portal: 'field' },
+    lang: 'hi',
+    description: 'समपार फाटक 81 पर रोड मेटल ट्रैक में फंस गया था, गैंग 2 द्वारा हटाकर लाइन क्लियर दी गई।',
+    category: 'lc',
+    severity: 'low',
+    km: 208.5,
+    line: 'UP',
+    nearestStation: 'TDL',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'SMMS',
+    status: 'RESOLVED',
+    history: [
+      { at: new Date(Date.now() - 420 * 60 * 1000).toISOString(), by: 'Mahesh Babu', action: 'RECEIVED', note: 'Gateman call to SM Tundla' },
+      { at: new Date(Date.now() - 390 * 60 * 1000).toISOString(), by: 'SM TDL', action: 'VERIFY', note: 'LC flangeway inspected and cleared by gang' },
+      { at: new Date(Date.now() - 360 * 60 * 1000).toISOString(), by: 'Section Controller', action: 'RESOLVE', note: 'Flangeway cleared, speed normal' },
+    ],
+  },
+  {
+    id: 'HZ-1022',
+    seeded: true,
+    at: new Date(Date.now() - 600 * 60 * 1000).toISOString(),
+    source: 'citizen',
+    reporter: { name: 'Sunil Kumar', role: 'Citizen', portal: 'citizen' },
+    lang: 'en',
+    description: 'Ballast washing observed after heavy downpour near culvert at km 349 Phaphund.',
+    category: 'track',
+    severity: 'low',
+    km: 349.1,
+    line: 'DN',
+    nearestStation: 'PHD',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'TMS',
+    status: 'RESOLVED',
+    history: [
+      { at: new Date(Date.now() - 600 * 60 * 1000).toISOString(), by: 'Sunil Kumar', action: 'RECEIVED', note: 'Citizen hazard submission' },
+      { at: new Date(Date.now() - 540 * 60 * 1000).toISOString(), by: 'SSE/P-Way/PHD', action: 'VERIFY', note: 'Keyman inspected, culvert waterway clear' },
+      { at: new Date(Date.now() - 480 * 60 * 1000).toISOString(), by: 'SSE/P-Way/PHD', action: 'RESOLVE', note: 'Track stable, ballast packing completed' },
+    ],
+  },
+];
+
+/** No seeded manual TSRs: speed restrictions in force come from the TMS register in the plan. */
+export const SEED_TSRS: ManualTsr[] = [];
+
+/** No seeded execution records: seeded history lives in the engine feed (snapshot.feeds.executionLog). */
+export const SEED_EXECUTION_LOG: ExecRecord[] = [];
+
+/** Demo BDMS requisitions so the planning cell inbox is not empty on first run (marked seeded: true). */
+export const SEED_REQUISITIONS: Requisition[] = [
+  {
+    id: 'REQ-001',
+    seeded: true,
+    no: 'BDMS/TMS/2026/041',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'TMS',
+    workType: 'DEEP_SCREENING',
+    line: 'DN',
+    startKm: 142.2,
+    endKm: 145.8,
+    durationMin: 210,
+    preferredDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    preferredWindow: 'night',
+    machine: 'BCM',
+    crew: 'PWAY_GANG',
+    blockType: 'TRAFFIC',
+    speedAfterKmph: 45,
+    speedAfterDays: 7,
+    gang: 'Unit 4 (Aligarh Section)',
+    incharge: 'R. K. Meena (SSE/P-Way/ALJN)',
+    remarks: 'Ballast fouling index exceeds 45%; high risk of rail pumping during monsoon.',
+    status: 'SUBMITTED',
+    validation: [],
+    by: 'R. K. Meena',
+    role: 'SSE/P-Way',
+    at: new Date(Date.now() - 3600000 * 4).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+    history: [
+      { at: new Date(Date.now() - 3600000 * 4).toISOString(), by: 'R. K. Meena', action: 'SUBMITTED' }
+    ],
+  },
+  {
+    id: 'REQ-002',
+    seeded: true,
+    no: 'BDMS/SMMS/2026/028',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'SMMS',
+    workType: 'POINT_MACHINE_OVERHAUL',
+    line: 'UP',
+    startKm: 166.4,
+    endKm: 166.6,
+    durationMin: 90,
+    preferredDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    preferredWindow: 'night',
+    machine: null,
+    crew: 'SIG_UNIT',
+    blockType: 'DISCONNECTION',
+    speedAfterKmph: null,
+    incharge: 'D. K. Yadav (SSE/Sig/HRS)',
+    remarks: 'Point 112A/B facing point lock inspection and cross-rod renewal.',
+    status: 'SUBMITTED',
+    validation: [],
+    by: 'D. K. Yadav',
+    role: 'SSE/Signal',
+    at: new Date(Date.now() - 3600000 * 12).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+    history: [
+      { at: new Date(Date.now() - 3600000 * 12).toISOString(), by: 'D. K. Yadav', action: 'SUBMITTED' }
+    ],
+  },
+  {
+    id: 'REQ-003',
+    seeded: true,
+    no: 'BDMS/TDMS/2026/019',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'TDMS',
+    workType: 'CONTACT_WIRE_RENEWAL',
+    line: 'DN',
+    startKm: 210.1,
+    endKm: 211.5,
+    durationMin: 150,
+    preferredDate: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10),
+    preferredWindow: 'night',
+    machine: 'TOWER_WAGON',
+    crew: 'OHE_GANG',
+    blockType: 'POWER',
+    incharge: 'S. N. Tripathi (SSE/TRD/TDL)',
+    remarks: 'Dropper re-spacing & insulator washing between km 210/12–211/24.',
+    status: 'SUBMITTED',
+    validation: [],
+    by: 'S. N. Tripathi',
+    role: 'SSE/TRD',
+    at: new Date(Date.now() - 3600000 * 6).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
+    history: [
+      { at: new Date(Date.now() - 3600000 * 6).toISOString(), by: 'S. N. Tripathi', action: 'SUBMITTED' }
+    ],
+  },
+  {
+    id: 'REQ-004',
+    seeded: true,
+    no: 'BDMS/TMS/2026/042',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'TMS',
+    workType: 'TURNOUT_RENEWAL',
+    line: 'BOTH',
+    startKm: 188.0,
+    endKm: 188.4,
+    durationMin: 240,
+    preferredDate: new Date(Date.now() + 86400000 * 3).toISOString().slice(0, 10),
+    preferredWindow: 'night',
+    machine: 'UNIMAT',
+    crew: 'PWAY_GANG',
+    blockType: 'INTEGRATED',
+    speedAfterKmph: 30,
+    speedAfterDays: 5,
+    incharge: 'A. K. Srivastava (SSE/P-Way)',
+    remarks: '1 in 12 CMS crossing replacement; requires S&T point motor disconnection.',
+    status: 'RETURNED',
+    validation: [],
+    cellRemarks: 'Raise the matching S&T point machine disconnection with SMMS first, so both works can share one block.',
+    by: 'A. K. Srivastava',
+    role: 'SSE/P-Way',
+    at: new Date(Date.now() - 3600000 * 24).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+    history: [
+      { at: new Date(Date.now() - 3600000 * 24).toISOString(), by: 'A. K. Srivastava', action: 'SUBMITTED' },
+      { at: new Date(Date.now() - 3600000 * 8).toISOString(), by: 'Planning Cell', action: 'RETURNED' }
+    ],
+  },
+  {
+    id: 'REQ-005',
+    seeded: true,
+    no: 'BDMS/SMMS/2026/029',
+    corridorId: 'NCR_NDLS_CNB',
+    dept: 'SMMS',
+    workType: 'TRACK_CIRCUIT_REPAIR',
+    line: 'DN',
+    startKm: 131.0,
+    endKm: 131.5,
+    durationMin: 60,
+    preferredDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    preferredWindow: 'day',
+    machine: null,
+    crew: 'SIG_UNIT',
+    blockType: 'DISCONNECTION',
+    incharge: 'M. P. Sharma (SSE/Sig)',
+    remarks: 'G33 insulation joint replacement in yard.',
+    status: 'DRAFT',
+    validation: [],
+    by: 'M. P. Sharma',
+    role: 'SSE/Signal',
+    at: new Date(Date.now() - 3600000 * 2).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+    history: [
+      { at: new Date(Date.now() - 3600000 * 2).toISOString(), by: 'M. P. Sharma', action: 'DRAFT' }
+    ],
+  },
+];
+
 /* ───────────────────────── store ───────────────────────── */
 
 export const useAppStore = create<AppState>()(
@@ -734,7 +1009,7 @@ export const useAppStore = create<AppState>()(
         get().addAudit({ action: `FORM_${status}`, entityType: 'form', entityId: formId, detail: reason });
         if (status === 'ISSUED') get().notify({ portals: ['field', 'control'], kind: 'INFO', title: `${formId} issued`, body: reason ?? 'Caution / disconnection form issued', route: '/app/field/caution' });
       },
-      tsrs: [],
+      tsrs: SEED_TSRS,
       addTsr: (t) => {
         const u = get().user;
         const tsr: ManualTsr = { ...t, id: `TSR-${short()}`, since: now(), by: u?.name ?? 'Unknown' };
@@ -806,7 +1081,7 @@ export const useAppStore = create<AppState>()(
       },
 
       /* execution */
-      executionLog: [],
+      executionLog: SEED_EXECUTION_LOG,
       startPossession: (rec) => {
         const u = get().user;
         const existing = get().executionLog.filter((r) => r.blockId !== rec.blockId);
@@ -849,7 +1124,7 @@ export const useAppStore = create<AppState>()(
       },
 
       /* requisitions */
-      requisitions: [],
+      requisitions: SEED_REQUISITIONS,
       saveRequisition: (r) => {
         const u = get().user;
         const existing = r.id ? get().requisitions.find((x) => x.id === r.id) : undefined;
@@ -902,7 +1177,7 @@ export const useAppStore = create<AppState>()(
       },
 
       /* hazard reports */
-      reports: [],
+      reports: SEED_REPORTS,
       submitReport: (r) => {
         const dept = r.dept === undefined ? deptForCategory(r.category) : r.dept;
         const rep: HazardReport = { ...r, dept, id: `HZ-${short()}`, at: now(), status: 'UNVERIFIED', history: [{ at: now(), by: r.reporter.name || 'Reporter', action: 'RECEIVED', note: dept ? `Routed to ${dept}` : 'Routed to Control for triage' }] };
@@ -991,8 +1266,22 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'samanvay.v4',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => localStorage),
+      // v3: drop the old seeded execution records / manual TSRs (fake block ids) and
+      // replace old seeded reports and requisitions with the corrected demo set.
+      migrate: (persisted, version) => {
+        const st = (persisted ?? {}) as Partial<AppState>;
+        if (version < 3) {
+          const isOldSeedReport = (r: HazardReport) => /^HZ-10\d\d$/.test(r.id);
+          const isOldSeedReq = (r: Requisition) => /^REQ-00\d$/.test(r.id);
+          st.executionLog = (st.executionLog ?? []).filter((r) => !/^BLK-0\d$/.test(r.blockId));
+          st.tsrs = (st.tsrs ?? []).filter((t) => !/^TSR-010\d$/.test(t.id));
+          st.reports = [...SEED_REPORTS, ...(st.reports ?? []).filter((r) => !isOldSeedReport(r))];
+          st.requisitions = [...SEED_REQUISITIONS, ...(st.requisitions ?? []).filter((r) => !isOldSeedReq(r))];
+        }
+        return st as AppState;
+      },
       partialize: (s) => ({
         user: s.user,
         theme: s.theme,

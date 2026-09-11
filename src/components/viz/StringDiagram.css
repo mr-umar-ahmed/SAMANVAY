@@ -1,0 +1,121 @@
+/* Time–distance (string) diagram. Tokens only — light / dark / sunlight follow. */
+.sd {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.sd-stage {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.sd-canvas {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sd-canvas.sd-selectable { cursor: crosshair; }
+.sd-canvas.sd-hit { cursor: pointer; }
+.sd-canvas.sd-dragging { cursor: col-resize; }
+
+.sd-sel {
+  position: absolute;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  border-left: 1px dashed var(--accent);
+  border-right: 1px dashed var(--accent);
+  box-sizing: border-box;
+}
+.sd-sel-label {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--on-yellow);
+  background: var(--pastel-yellow);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+.sd-tip {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background: var(--bg-1);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 6px 9px;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  max-width: 280px;
+}
+.sd-tip b { font-weight: 600; }
+.sd-tip .sd-tip-sub { color: var(--ink-3); }
+
+.sd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.sd-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.sd-legend .sd-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--line-2);
+  margin: 0 2px;
+}
+.sd-sw {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 1.5px solid var(--train-pass);
+}
+.sd-sw-vb { border-top-color: var(--train-vb); border-top-width: 2px; }
+.sd-sw-prem { border-top-color: var(--train-prem); border-top-width: 2px; }
+.sd-sw-pass { border-top-color: var(--train-pass); }
+.sd-sw-goods { border-top-color: var(--train-goods); border-top-style: dashed; }
+.sd-sw-now { border-top-color: var(--accent); border-top-width: 2px; }
+.sd-box {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line-2);
+  box-sizing: border-box;
+}
+.sd-box-tms { background: color-mix(in oklab, var(--tms) 35%, transparent); border-color: var(--tms); }
+.sd-box-smms { background: color-mix(in oklab, var(--smms) 35%, transparent); border-color: var(--smms); }
+.sd-box-tdms { background: color-mix(in oklab, var(--tdms) 35%, transparent); border-color: var(--tdms); }
+.sd-box-joint {
+  background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--tms) 35%, transparent) 0 3px, color-mix(in oklab, var(--tdms) 35%, transparent) 3px 6px);
+  border-color: var(--ink-3);
+}
+.sd-box-proposed { border-color: var(--accent); border-style: dashed; background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--accent) 45%, transparent) 0 1px, transparent 1px 4px); }
+.sd-box-granted { border-color: var(--ok); border-width: 1.5px; }
+.sd-box-locked { border-color: var(--ink); border-width: 2px; }
+.sd-box-coa { border-color: var(--coa); border-style: dashed; background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--coa) 35%, transparent) 0 1px, transparent 1px 4px); }
+.sd-box-free { background: var(--pastel-green); border-color: var(--ok); }
+.sd-box-tsr { background: color-mix(in oklab, var(--crit) 22%, transparent); border-color: var(--crit); height: 6px; }
+.sd-box-baseline { border-color: var(--ink-4); border-style: dashed; background: transparent; }
+
+@media (max-width: 480px) {
+  .sd-legend { gap: 4px 10px; }
+  .sd-legend .sd-sep { display: none; }
+}

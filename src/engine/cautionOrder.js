@@ -23,11 +23,18 @@ export function generateCautionOrders(tasks, blocks, corridor, day = 0, dateIso 
     const isLiftingToday = liftingDay === day;
 
     // Estimate affected trains crossing this section
+    // Time lost by one train running through the restriction: restricted length
+    // (+1 km for braking / re-acceleration) at the TSR speed instead of line speed.
+    const lenKm = Math.max(0.5, (t.lengthKm || 0) + 1.0);
+    const tsrLoss = (cls) => {
+      const v = Math.min(corridor.mpsKmph, cls === 'GOODS' ? 65 : 110);
+      return Math.max(0, Math.round((lenKm / t.tsrKmph) * 60 + 2.5 - (lenKm / v) * 60));
+    };
     const affectedTrains = (liftingBlock ? liftingBlock.affectedTrains : []).map((tr) => ({
       trainNo: tr.number || tr.id,
       name: tr.name || 'Train',
       cls: tr.cls || 'EXP',
-      estDelayMin: Math.round(15 + (t.lengthKm || 1) * 3)
+      estDelayMin: tsrLoss(tr.cls)
     }));
 
     orders.push({
@@ -64,7 +71,7 @@ export function generateCautionOrders(tasks, blocks, corridor, day = 0, dateIso 
     if (hasTamping) {
       orders.push({
         id: `CO-${String(seq).padStart(3, '0')}`,
-        orderNo: `T/409B-${corridor.code.replace('–', '-')}-${dateIso.replace(/-/g, '')}-${String(seq).padStart(3, '0')}`,
+        orderNo: `T/409B-${corridor.code.replace('–', '-')}-${dateIso.replace(/-/g, '')}-${b.id.split('-').pop()}`,
         formType: 'T/409B',
         formTitle: 'Reminder Caution Order (Form T/409B - Post Machine Work)',
         taskId: null,
@@ -106,13 +113,14 @@ export function generateDisconnectionNotices(tasks, blocks, corridor, day = 0, d
     for (const t of stTasks) {
       notices.push({
         id: `DISC-${String(seq).padStart(3, '0')}`,
-        noticeNo: `T/351-${corridor.code.replace('–', '-')}-${dateIso.replace(/-/g, '')}-${String(seq).padStart(3, '0')}`,
+        // numbered by block and work so a notice keeps its number (and status) across re-plans
+        noticeNo: `T/351-${corridor.code.replace('–', '-')}-${b.id.split('-').pop()}-${t.id}`,
         formType: 'T/351',
         formTitle: 'Signal Disconnection / Reconnection Notice (Form T/351)',
         blockId: b.id,
         taskId: t.id,
         gear: t.label,
-        section: t.sectionLabel,
+        section: t.sectionLabel || b.sectionText,
         startKm: t.startKm,
         endKm: t.endKm,
         disconnectionTime: b.startText,

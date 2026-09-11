@@ -21,6 +21,15 @@ export interface TourOptions {
 
 let active: Driver | null = null;
 
+/** First element with this data-tour value that is actually on screen. */
+function visibleTarget(target: string): Element | undefined {
+  const all = Array.from(document.querySelectorAll(`[data-tour="${target}"]`));
+  return all.find((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.right > 0 && r.left < window.innerWidth;
+  });
+}
+
 function waitFor(selector: string, timeout = 2500): Promise<void> {
   return new Promise((resolve) => {
     const t0 = performance.now();
@@ -38,8 +47,10 @@ export function startTour(steps: TourStep[], opts: TourOptions) {
     active = null;
   }
   const labels = opts.labels ?? { next: 'Next', prev: 'Back', done: 'Done', progress: '{{current}} of {{total}}' };
+  // Resolve the target when the step is shown; a missing or off-screen element
+  // (e.g. the sidebar on a phone) falls back to a centred popover.
   const driveSteps: DriveStep[] = steps.map((s) => ({
-    element: s.target ? `[data-tour="${s.target}"]` : undefined,
+    element: s.target ? (() => visibleTarget(s.target!) as Element) : undefined,
     popover: { title: s.title, description: s.body, side: 'bottom', align: 'start' },
   }));
 

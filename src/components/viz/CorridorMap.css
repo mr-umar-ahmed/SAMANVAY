@@ -1,0 +1,145 @@
+/* CorridorMap — Leaflet corridor map in the deck palette. All colours via tokens. */
+.cmap {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-2);
+}
+.cmap-canvas {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-2);
+  font-family: var(--font-ui);
+}
+.cmap.schematic .cmap-canvas { background: var(--bg-1); }
+.cmap .leaflet-container { font-family: var(--font-ui); font-size: var(--fs-sm); background: transparent; }
+.cmap .leaflet-control-attribution { font-size: 9.5px; background: color-mix(in oklab, var(--bg-1) 85%, transparent); color: var(--ink-3); }
+.cmap .leaflet-control-attribution a { color: var(--ink-2); }
+.cmap .leaflet-bar { border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.cmap .leaflet-bar a { background: var(--bg-1); color: var(--ink); border-bottom-color: var(--line); }
+.cmap .leaflet-bar a:hover { background: var(--bg-2); }
+
+/* Night theme — re-tone the OSM raster so it sits on the dark surface. */
+:root[data-theme='dark'] .cmap .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.82) contrast(0.88) saturate(0.6); }
+:root[data-theme='sunlight'] .cmap .leaflet-tile-pane { filter: saturate(0.5) contrast(1.05); }
+
+/* Station code labels (permanent tooltips) */
+.cmap .cmap-label {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  font: 600 10px/1 var(--font-mono);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 2px var(--bg-1), 0 0 3px var(--bg-1), 0 0 4px var(--bg-1);
+}
+.cmap .cmap-label.junction { font-size: 11px; }
+.cmap .cmap-label::before { display: none; }
+.cmap .cmap-tip {
+  background: var(--bg-1);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--fs-xs);
+  padding: 3px 6px;
+}
+.cmap .cmap-tip::before { display: none; }
+
+/* Popups */
+.cmap .leaflet-popup-content-wrapper {
+  background: var(--bg-1);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0;
+}
+.cmap .leaflet-popup-content { margin: 10px 12px; font-size: var(--fs-sm); line-height: 1.4; min-width: 180px; }
+.cmap .leaflet-popup-tip { background: var(--bg-1); border: 1px solid var(--line); border-top: 0; border-left: 0; }
+.cmap .leaflet-popup-close-button { color: var(--ink-3); }
+.cmap-pop .cmap-pop-title { font-weight: 600; font-size: var(--fs-base); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.cmap-pop .cmap-pop-row { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-2); }
+.cmap-pop .cmap-pop-row b { color: var(--ink); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+.cmap-pop .cmap-pop-text { color: var(--ink-2); margin: 4px 0; }
+.cmap-pop .cmap-pop-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
+
+/* Train markers */
+.cmap-train-wrap { background: transparent; border: 0; }
+.cmap-train {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid currentColor;
+  background: var(--bg-1);
+  font: 500 10px/1.3 var(--font-mono);
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.cmap-train.premium { font-weight: 700; }
+.cmap-train.halted { border-style: dashed; }
+.cmap-train.in-block { outline: 2px solid var(--crit); outline-offset: 1px; }
+
+/* Incident, depot and pin markers */
+.cmap-icon { background: transparent; border: 0; }
+.cmap-incident { position: absolute; transform: translate(-50%, -100%); cursor: pointer; filter: drop-shadow(0 1px 1px rgba(17, 17, 17, 0.25)); }
+.cmap-depot { position: absolute; transform: translate(-50%, -50%); width: 10px; height: 10px; border-radius: 2px; border: 1.5px solid var(--bg-1); box-shadow: 0 0 0 1px var(--ink-4); cursor: pointer; }
+.cmap-depot.crew { border-radius: 50% 50% 2px 2px; }
+.cmap-pin { position: absolute; transform: translate(-50%, -100%); cursor: default; filter: drop-shadow(0 1px 1px rgba(17, 17, 17, 0.3)); }
+
+/* Selection ring */
+@keyframes cmap-pulse { 0% { stroke-opacity: 0.9; } 50% { stroke-opacity: 0.35; } 100% { stroke-opacity: 0.9; } }
+.cmap-pulse { animation: cmap-pulse 1.6s ease-in-out infinite; }
+
+/* Chip + legend overlays */
+.cmap-chip {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  color: var(--on-yellow);
+  border: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  pointer-events: none;
+}
+.cmap-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 800;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--bg-1) 90%, transparent);
+  border: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  max-width: calc(100% - 20px);
+  pointer-events: none;
+}
+.cmap-legend .lg { display: inline-flex; align-items: center; gap: 5px; }
+.cmap-legend .sw { display: inline-block; width: 12px; height: 4px; border-radius: 2px; }
+.cmap-legend .sw.dash { background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px); }
+.cmap-legend .sw.dot { width: 8px; height: 8px; border-radius: 50%; }
+.cmap-legend .sw.sq { width: 8px; height: 8px; border-radius: 2px; }
+.cmap-legend .note { flex-basis: 100%; color: var(--ink-3); font-size: 10px; }
+@media (max-width: 600px) {
+  .cmap-legend { font-size: 10px; gap: 3px 8px; padding: 4px 8px; }
+  .cmap-legend .note { display: none; }
+  .cmap .leaflet-control-attribution { display: none; }
+}

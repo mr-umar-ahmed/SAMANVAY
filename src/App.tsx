@@ -9,51 +9,52 @@ import { CitizenShell } from './app/CitizenShell';
 import { Preloader } from './features/preloader/Preloader';
 import { Spinner } from './components/ui';
 
-// public
+// public & auth
 const LandingPage = lazy(() => import('./pages/auth/LandingPage'));
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
 const SignupPage = lazy(() => import('./pages/auth/SignupPage'));
 const InstallPage = lazy(() => import('./pages/auth/InstallPage'));
+
 // citizen
 const CitizenHomePage = lazy(() => import('./pages/citizen/CitizenHomePage'));
 const CitizenTrainPage = lazy(() => import('./pages/citizen/CitizenTrainPage'));
 const CitizenStationPage = lazy(() => import('./pages/citizen/CitizenStationPage'));
 const CitizenReportPage = lazy(() => import('./pages/citizen/CitizenReportPage'));
 const CitizenMyReportsPage = lazy(() => import('./pages/citizen/CitizenMyReportsPage'));
-// planning
-const OverviewPage = lazy(() => import('./pages/planning/OverviewPage'));
-const WeeklyPlanPage = lazy(() => import('./pages/planning/WeeklyPlanPage'));
-const MonthlyPage = lazy(() => import('./pages/planning/MonthlyPage'));
-const IntakePage = lazy(() => import('./pages/planning/IntakePage'));
-const RiskPage = lazy(() => import('./pages/planning/RiskPage'));
-const CapacityPage = lazy(() => import('./pages/planning/CapacityPage'));
-const StudioPage = lazy(() => import('./pages/planning/StudioPage'));
-const HandoffPage = lazy(() => import('./pages/planning/HandoffPage'));
-// shared
-const IntegrationPage = lazy(() => import('./pages/shared/IntegrationPage'));
-const ScenariosPage = lazy(() => import('./pages/shared/ScenariosPage'));
-const CopilotPage = lazy(() => import('./pages/shared/CopilotPage'));
-const CautionDeskPage = lazy(() => import('./pages/shared/CautionDeskPage'));
-const ExecutionLogPage = lazy(() => import('./pages/shared/ExecutionLogPage'));
-const MethodPage = lazy(() => import('./pages/shared/MethodPage'));
+
 // control
-const ControlDeskPage = lazy(() => import('./pages/control/ControlDeskPage'));
-const BlockRequestsPage = lazy(() => import('./pages/control/BlockRequestsPage'));
-const LiveCorridorPage = lazy(() => import('./pages/control/LiveCorridorPage'));
+const ControlBoardPage = lazy(() => import('./pages/control/ControlBoardPage'));
+const ReplanPage = lazy(() => import('./pages/control/ReplanPage'));
+
+// planning
+const PlanningOverviewPage = lazy(() => import('./pages/planning/PlanningOverviewPage'));
+const WeeklyPlanPage = lazy(() => import('./pages/planning/WeeklyPlanPage'));
+const RiskPage = lazy(() => import('./pages/planning/RiskPage'));
+const OptimiserPage = lazy(() => import('./pages/planning/OptimiserPage'));
+const HandoffPage = lazy(() => import('./pages/planning/HandoffPage'));
+const CapacityPage = lazy(() => import('./pages/planning/CapacityPage'));
+
+// shared
+const HorizonsPage = lazy(() => import('./pages/shared/HorizonsPage'));
+const IncidentsPage = lazy(() => import('./pages/shared/IncidentsPage'));
+const FormsPage = lazy(() => import('./pages/shared/FormsPage'));
+const RequisitionsPage = lazy(() => import('./pages/shared/RequisitionsPage'));
+const ExecutionLogPage = lazy(() => import('./pages/shared/ExecutionLogPage'));
+const IntegrationPage = lazy(() => import('./pages/shared/IntegrationPage'));
+const MethodPage = lazy(() => import('./pages/shared/MethodPage'));
+const CopilotPage = lazy(() => import('./pages/shared/CopilotPage'));
+
 // departments
-const DeptDeskPage = lazy(() => import('./pages/dept/DeptDeskPage'));
+const DeptTodayPage = lazy(() => import('./pages/dept/DeptTodayPage'));
 const DeptRegisterPage = lazy(() => import('./pages/dept/DeptRegisterPage'));
-const DeptDemandPage = lazy(() => import('./pages/dept/DeptDemandPage'));
-const DeptBlocksPage = lazy(() => import('./pages/dept/DeptBlocksPage'));
-const DeptResourcesPage = lazy(() => import('./pages/dept/DeptResourcesPage'));
-const ReportsPage = lazy(() => import('./pages/shared/ReportsPage'));
+
 // division
-const DivisionOverviewPage = lazy(() => import('./pages/division/DivisionOverviewPage'));
-const RoiPage = lazy(() => import('./pages/division/RoiPage'));
-const ProgrammePage = lazy(() => import('./pages/division/ProgrammePage'));
-const AuditPage = lazy(() => import('./pages/division/AuditPage'));
-const AdminPage = lazy(() => import('./pages/division/AdminPage'));
+const DivisionBriefPage = lazy(() => import('./pages/division/DivisionBriefPage'));
 const EscalationsPage = lazy(() => import('./pages/division/EscalationsPage'));
+const RoiPage = lazy(() => import('./pages/division/RoiPage'));
+const AdminPage = lazy(() => import('./pages/division/AdminPage'));
+const AuditPage = lazy(() => import('./pages/division/AuditPage'));
+
 // field
 const FieldTodayPage = lazy(() => import('./pages/field/FieldTodayPage'));
 const FieldReportPage = lazy(() => import('./pages/field/FieldReportPage'));
@@ -95,13 +96,20 @@ function portal(id: PortalId, children: ReactNode) {
 
 const deptChildren = (
   <>
-    <Route index element={<DeptDeskPage />} />
+    <Route index element={<Navigate to="today" replace />} />
+    <Route path="today" element={<DeptTodayPage tab="today" />} />
+    <Route path="resources" element={<DeptTodayPage tab="resources" />} />
     <Route path="register" element={<DeptRegisterPage />} />
-    <Route path="demand" element={<DeptDemandPage />} />
-    <Route path="blocks" element={<DeptBlocksPage />} />
-    <Route path="resources" element={<DeptResourcesPage />} />
-    <Route path="forms" element={<CautionDeskPage />} />
-    <Route path="reports" element={<ReportsPage />} />
+    <Route path="requisitions" element={<RequisitionsPage mode="dept" />} />
+    <Route path="demand" element={<RequisitionsPage mode="dept" />} />
+    <Route path="blocks" element={<WeeklyPlanPage mode="dept" />} />
+    <Route path="caution" element={<FormsPage tab="caution" />} />
+    <Route path="disconnections" element={<FormsPage tab="disconnections" />} />
+    <Route path="powerblocks" element={<FormsPage tab="powerblocks" />} />
+    <Route path="forms" element={<FormsPage />} />
+    <Route path="incidents" element={<IncidentsPage mode="dept" />} />
+    <Route path="incidents/:id" element={<IncidentsPage mode="dept" />} />
+    <Route path="reports" element={<IncidentsPage mode="dept" />} />
     <Route path="copilot" element={<CopilotPage />} />
     <Route path="method" element={<MethodPage />} />
     <Route path="*" element={<NotFound />} />
@@ -126,6 +134,8 @@ export default function App() {
             <Route path="train/:number" element={<CitizenTrainPage />} />
             <Route path="station/:code" element={<CitizenStationPage />} />
             <Route path="report" element={<CitizenReportPage />} />
+            <Route path="reports" element={<CitizenMyReportsPage />} />
+            <Route path="reports/:ref" element={<CitizenMyReportsPage />} />
             <Route path="my-reports" element={<CitizenMyReportsPage />} />
             <Route path="*" element={<NotFound />} />
           </Route>
@@ -135,17 +145,22 @@ export default function App() {
           {portal(
             'planning',
             <>
-              <Route index element={<OverviewPage />} />
-              <Route path="weekly" element={<WeeklyPlanPage />} />
-              <Route path="monthly" element={<MonthlyPage />} />
-              <Route path="intake" element={<IntakePage />} />
+              <Route index element={<Navigate to="overview" replace />} />
+              <Route path="overview" element={<PlanningOverviewPage />} />
+              <Route path="demands" element={<RequisitionsPage mode="cell" />} />
+              <Route path="demands/:id" element={<RequisitionsPage mode="cell" />} />
+              <Route path="intake" element={<RequisitionsPage mode="cell" />} />
               <Route path="risk" element={<RiskPage />} />
+              <Route path="weekly" element={<WeeklyPlanPage mode="edit" />} />
+              <Route path="monthly" element={<HorizonsPage mode="plan" />} />
+              <Route path="optimiser" element={<OptimiserPage tab="studio" />} />
+              <Route path="studio" element={<OptimiserPage tab="studio" />} />
+              <Route path="scenarios" element={<OptimiserPage tab="scenarios" />} />
+              <Route path="handoff" element={<HandoffPage />} />
+              <Route path="adherence" element={<ExecutionLogPage mode="adherence" />} />
+              <Route path="execution" element={<ExecutionLogPage mode="adherence" />} />
               <Route path="capacity" element={<CapacityPage />} />
               <Route path="integration" element={<IntegrationPage />} />
-              <Route path="studio" element={<StudioPage />} />
-              <Route path="scenarios" element={<ScenariosPage />} />
-              <Route path="handoff" element={<HandoffPage />} />
-              <Route path="execution" element={<ExecutionLogPage />} />
               <Route path="copilot" element={<CopilotPage />} />
               <Route path="method" element={<MethodPage />} />
               <Route path="*" element={<NotFound />} />
@@ -154,14 +169,21 @@ export default function App() {
           {portal(
             'control',
             <>
-              <Route index element={<ControlDeskPage />} />
-              <Route path="blocks" element={<BlockRequestsPage />} />
-              <Route path="corridor" element={<LiveCorridorPage />} />
-              <Route path="caution" element={<CautionDeskPage />} />
-              <Route path="execution" element={<ExecutionLogPage />} />
-              <Route path="disruptions" element={<ScenariosPage />} />
-              <Route path="incidents" element={<ReportsPage />} />
+              <Route index element={<Navigate to="board" replace />} />
+              <Route path="board" element={<ControlBoardPage view="board" />} />
+              <Route path="programme" element={<ControlBoardPage view="programme" />} />
+              <Route path="map" element={<ControlBoardPage view="map" />} />
+              <Route path="blocks" element={<ControlBoardPage view="board" />} />
+              <Route path="corridor" element={<ControlBoardPage view="map" />} />
+              <Route path="replan" element={<ReplanPage />} />
+              <Route path="disruptions" element={<ReplanPage />} />
+              <Route path="incidents" element={<IncidentsPage mode="control" />} />
+              <Route path="incidents/:id" element={<IncidentsPage mode="control" />} />
+              <Route path="caution" element={<FormsPage tab="caution" />} />
+              <Route path="weekly" element={<WeeklyPlanPage mode="review" />} />
               <Route path="handoff" element={<HandoffPage />} />
+              <Route path="log" element={<ExecutionLogPage mode="control" />} />
+              <Route path="execution" element={<ExecutionLogPage mode="control" />} />
               <Route path="copilot" element={<CopilotPage />} />
               <Route path="method" element={<MethodPage />} />
               <Route path="*" element={<NotFound />} />
@@ -173,13 +195,18 @@ export default function App() {
           {portal(
             'division',
             <>
-              <Route index element={<DivisionOverviewPage />} />
-              <Route path="roi" element={<RoiPage />} />
-              <Route path="programme" element={<ProgrammePage />} />
-              <Route path="audit" element={<AuditPage />} />
+              <Route index element={<Navigate to="brief" replace />} />
+              <Route path="brief" element={<DivisionBriefPage />} />
+              <Route path="plans" element={<HorizonsPage mode="approve" />} />
+              <Route path="programme" element={<HorizonsPage mode="approve" />} />
               <Route path="escalations" element={<EscalationsPage />} />
-              <Route path="integration" element={<IntegrationPage />} />
+              <Route path="roi" element={<RoiPage />} />
+              <Route path="incidents" element={<IncidentsPage mode="division" />} />
+              <Route path="incidents/:id" element={<IncidentsPage mode="division" />} />
+              <Route path="feeds" element={<IntegrationPage readOnly />} />
+              <Route path="integration" element={<IntegrationPage readOnly />} />
               <Route path="admin" element={<AdminPage />} />
+              <Route path="audit" element={<AuditPage />} />
               <Route path="method" element={<MethodPage />} />
               <Route path="*" element={<NotFound />} />
             </>
@@ -187,8 +214,11 @@ export default function App() {
           {portal(
             'field',
             <>
-              <Route index element={<FieldTodayPage />} />
-              <Route path="report" element={<FieldReportPage />} />
+              <Route index element={<Navigate to="today" replace />} />
+              <Route path="today" element={<FieldTodayPage />} />
+              <Route path="report" element={<FieldReportPage tab="new" />} />
+              <Route path="reports" element={<FieldReportPage tab="mine" />} />
+              <Route path="reports/:ref" element={<FieldReportPage tab="mine" />} />
               <Route path="caution" element={<FieldCautionPage />} />
               <Route path="train" element={<FieldTrainPage />} />
               <Route path="*" element={<NotFound />} />

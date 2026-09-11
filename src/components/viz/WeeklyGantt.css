@@ -1,0 +1,397 @@
+/* ── WeeklyGantt ─────────────────────────────────────────────
+   Tokens only. The one hard-coded colour is white text on a
+   department fill (allowed by the design rules). */
+
+.wg {
+  --wg-label-w: 132px;
+  --wg-night: color-mix(in oklab, var(--pastel-lavender) 32%, transparent);
+  --wg-quiet: color-mix(in oklab, var(--pastel-green) 65%, transparent);
+  position: relative;
+  font-size: var(--fs-sm);
+}
+.wg-section { --wg-label-w: 156px; }
+
+.wg-scroll {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+.wg-grid {
+  min-width: 960px;
+  --wg-days: 7;
+}
+
+/* rows */
+.wg-row {
+  display: grid;
+  grid-template-columns: var(--wg-label-w) 1fr;
+  border-bottom: 1px solid var(--line);
+  min-height: 34px;
+}
+.wg-row:last-child { border-bottom: 0; }
+.wg-head {
+  height: 30px;
+  background: var(--bg-2);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.wg-head .wg-label {
+  display: flex;
+  align-items: center;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  background: var(--bg-2);
+}
+
+.wg-label {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  padding: 6px 10px;
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+.wg-label-main {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wg-line {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+/* track + background cells */
+.wg-track {
+  position: relative;
+  min-width: 0;
+}
+.wg-cells {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  pointer-events: none;
+}
+.wg-hours { grid-template-columns: repeat(24, 1fr); }
+.wg-days { grid-template-columns: repeat(var(--wg-days), 1fr); }
+
+.wg-cell {
+  position: relative;
+  border-left: 1px solid var(--grid);
+  min-width: 0;
+}
+.wg-hours .wg-cell:nth-child(3n + 1) { border-left-color: var(--axis); }
+.wg-hours .wg-cell.night { background: var(--wg-night); }
+.wg-hours .wg-cell > b {
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.wg-daycell {
+  border-left: 1px solid var(--axis);
+  background-image:
+    linear-gradient(to right, var(--wg-night) 0 25%, transparent 25% 91.667%, var(--wg-night) 91.667% 100%),
+    repeating-linear-gradient(to right, var(--grid) 0 1px, transparent 1px calc(100% / 4));
+}
+.wg-head .wg-daycell {
+  background-image: none;
+  padding: 3px 6px 0;
+  overflow: hidden;
+}
+.wg-head .wg-daycell > b {
+  display: block;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--ink-2);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.wg-head .wg-daycell > em {
+  display: block;
+  font-style: normal;
+  font-size: 9px;
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.wg-quiet {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--wg-quiet);
+  z-index: 0;
+}
+
+/* bars */
+.wg-bar {
+  --wg-fill: var(--ink-3);
+  --wg-soft: var(--bg-3);
+  --wg-ink: var(--ink-2);
+  position: absolute;
+  height: 22px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--wg-fill) 85%, transparent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 2;
+  outline-offset: 1px;
+  transition: box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+.wg-bar.d-tms  { --wg-fill: var(--tms);  --wg-soft: var(--tms-soft);  --wg-ink: var(--on-tms); }
+.wg-bar.d-smms { --wg-fill: var(--smms); --wg-soft: var(--smms-soft); --wg-ink: var(--on-smms); }
+.wg-bar.d-tdms { --wg-fill: var(--tdms); --wg-soft: var(--tdms-soft); --wg-ink: var(--on-tdms); }
+
+.wg-bar.joint { background: transparent; }
+.wg-stripes {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 0;
+}
+.wg-stripe { flex: 1; }
+.wg-stripe.d-tms  { background: color-mix(in oklab, var(--tms) 85%, transparent); }
+.wg-stripe.d-smms { background: color-mix(in oklab, var(--smms) 85%, transparent); }
+.wg-stripe.d-tdms { background: color-mix(in oklab, var(--tdms) 85%, transparent); }
+
+/* disconnection-only: outlined, dashed */
+.wg-bar.disc {
+  background: var(--wg-soft);
+  color: var(--wg-ink);
+  border: 1px dashed var(--wg-fill);
+}
+.wg-bar.disc.joint { background: var(--bg-1); border-color: var(--ink-3); color: var(--ink); }
+.wg-bar.disc .wg-stripe.d-tms  { background: var(--tms-soft); }
+.wg-bar.disc .wg-stripe.d-smms { background: var(--smms-soft); }
+.wg-bar.disc .wg-stripe.d-tdms { background: var(--tdms-soft); }
+
+.wg-bar-text,
+.wg-glyphs {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.wg-bar-text { flex: 1 1 auto; overflow: hidden; }
+.wg-bar-dept { font-weight: 600; letter-spacing: 0.01em; }
+.wg-glyphs { flex: none; margin-left: auto; }
+
+.wg-changed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--bg-1);
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1;
+  flex: none;
+}
+.wg-changed-legend { border: 1px solid var(--accent); }
+
+/* status outlines (chart bars and legend samples only) */
+.wg-bar.st-proposed  { outline: 2px dashed var(--warn); }
+.wg-bar.st-concurred { outline: 2px solid var(--warn); }
+.wg-bar.st-granted   { outline: 2px solid var(--ok); }
+.wg-bar.st-locked    { outline: 2px solid var(--ink); }
+.wg-bar.st-refused   { opacity: 0.45; filter: grayscale(0.85); }
+.wg-bar.st-refused .wg-bar-text { text-decoration: line-through; }
+
+.wg-bar.dim { opacity: 0.22; }
+.wg-bar.st-refused.dim { opacity: 0.15; }
+.wg-bar.sel {
+  box-shadow: 0 0 0 3px var(--bg-1), 0 0 0 5px var(--info);
+  z-index: 3;
+}
+.wg-bar.hl { animation: wg-pulse 1.1s var(--ease) infinite; z-index: 3; }
+.wg-bar:hover { box-shadow: 0 0 0 3px var(--bg-1), 0 0 0 4px var(--line-2); z-index: 3; }
+.wg-bar:focus-visible {
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px var(--bg-1), 0 0 0 5px var(--info);
+  z-index: 3;
+}
+@keyframes wg-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 6px var(--accent-soft); }
+}
+
+/* inline bar for lists */
+.wg-bar.wg-inline {
+  position: relative;
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  vertical-align: middle;
+  top: auto;
+  left: auto;
+}
+span.wg-bar.wg-inline { cursor: default; }
+
+/* baseline ghosts */
+.wg-ghost {
+  position: absolute;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  border: 1px dashed var(--line-2);
+  box-sizing: border-box;
+  z-index: 1;
+}
+
+/* tooltip */
+.wg-tip {
+  position: absolute;
+  z-index: 20;
+  width: 280px;
+  max-width: calc(100% - 8px);
+  padding: 10px 12px;
+  background: var(--bg-1);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: normal;
+}
+.wg-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wg-tip-status {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.wg-tip-status.st-proposed  { border-color: var(--warn); color: var(--on-yellow); border-style: dashed; }
+.wg-tip-status.st-concurred { border-color: var(--warn); color: var(--on-yellow); }
+.wg-tip-status.st-granted   { border-color: var(--ok); color: var(--on-green); }
+.wg-tip-status.st-locked    { border-color: var(--ink); color: var(--ink); }
+.wg-tip-status.st-refused   { color: var(--ink-3); text-decoration: line-through; }
+.wg-tip-body {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+}
+.wg-tip-body dt { color: var(--ink-3); }
+.wg-tip-body dd { margin: 0; min-width: 0; }
+.wg-tip-dept {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+.wg-tip-note { color: var(--ink-3); }
+.wg-tip-crit { color: var(--crit); }
+
+/* legend */
+.wg-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 8px 2px 0;
+}
+.wg-legend-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.wg-legend-group > .caps { color: var(--ink-4); }
+.wg-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.wg-sample {
+  display: inline-block;
+  width: 18px;
+  height: 11px;
+  box-sizing: border-box;
+  border-radius: 3px;
+  background: var(--bg-3);
+  vertical-align: middle;
+  flex: none;
+}
+.wg-sample.st-proposed  { border: 2px dashed var(--warn); background: transparent; }
+.wg-sample.st-concurred { border: 2px solid var(--warn); background: transparent; }
+.wg-sample.st-granted   { border: 2px solid var(--ok); background: transparent; }
+.wg-sample.st-locked    { border: 2px solid var(--ink); background: transparent; }
+.wg-sample.st-refused   { background: var(--bg-3); opacity: 0.6; }
+.wg-sample-joint {
+  display: inline-flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+}
+.wg-sample-joint b { flex: 1; }
+.wg-sample-joint b.d-tms  { background: var(--tms); }
+.wg-sample-joint b.d-smms { background: var(--smms); }
+.wg-sample-disc { border: 1px dashed var(--ink-3); background: var(--bg-2); }
+.wg-sample-night { background: color-mix(in oklab, var(--pastel-lavender) 60%, var(--bg-1)); }
+.wg-sample-quiet { background: var(--pastel-green); }
+.wg-sample-ghost { height: 6px; border: 1px dashed var(--line-2); background: var(--bg-3); }
+
+.wg-empty {
+  padding: 18px 12px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+/* phone: narrower sticky label, chart scrolls inside .table-wrap */
+@media (max-width: 640px) {
+  .wg { --wg-label-w: 96px; }
+  .wg-section { --wg-label-w: 112px; }
+  .wg-label { padding: 6px 8px; }
+  .wg-label-main { font-size: var(--fs-xs); }
+  .wg-tip { width: 240px; }
+}
+
+@media print {
+  .wg-scroll { overflow: visible; border: 0; }
+  .wg-grid { min-width: 0; }
+  .wg-bar.hl { animation: none; }
+}

@@ -5,6 +5,7 @@
  * posts a plain-data snapshot back.
  */
 import { createContext, runPlanning } from './planner.js';
+import { buildRolling } from './horizons.js';
 import { hourlyLoad } from './occupancy.js';
 import { isoDate } from './time.js';
 import type { DayOccupancy, DistributiveOmit, PlanRequest, Snapshot, WorkerMessage } from './types';
@@ -53,6 +54,9 @@ self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
         t.risk.explanation.push({ key: 'pinned', label: 'Pinned by planner', value: 1, weight: null, text: 'raised to the mandatory floor for this run' });
       }
     }
+    // The 26-week programme was built inside createContext; rebuild it so it never
+    // references a work that was just excluded (buildMonthly expands its entries).
+    if (excludedTaskIds.length || pinnedTaskIds.length) ctx.rolling = buildRolling(ctx);
     post({ type: 'progress', step: 'weekly', text: 'Optimising the weekly plan (greedy construction + simulated annealing)' });
     const result = runPlanning(ctx, { weights, rules, iterations });
     post({ type: 'progress', step: 'monthly', text: 'Monthly plan and 26-week programme assembled' });
@@ -65,6 +69,7 @@ self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
     const m = ctx.models.escalation;
     const weeklyAi = result.weekly.ai;
     const snapshot: Snapshot = {
+      seed: ctx.seed,
       corridor: ctx.corridor,
       planStart: ctx.planStartIso,
       feeds: {

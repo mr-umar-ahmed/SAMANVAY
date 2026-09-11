@@ -4,6 +4,21 @@
  */
 export const MIN_PER_DAY = 1440;
 
+/**
+ * Short stable hash (FNV-1a, base 36, upper case). Used to give blocks and
+ * injected works ids that do not change when the plan is recomputed with the
+ * same content, so approvals and pins stay attached to the right object.
+ */
+export function stableHash(text, len = 5) {
+  let h = 0x811c9dc5;
+  const s = String(text);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36).toUpperCase().padStart(len, '0').slice(-len);
+}
+
 export function hhmmToMin(str) {
   const [h, m] = String(str).split(':').map(Number);
   return h * 60 + (m || 0);

@@ -28,7 +28,7 @@ import { createRng } from './random.js';
 import { buildDayOccupancy, commonFreeWindows } from './occupancy.js';
 import { evaluateWindow, tsrLossPerDay } from './delayModel.js';
 import { DEFAULT_WEIGHTS, RULES, INCOMPATIBLE_PAIRS, MACHINE_TYPES } from './constants.js';
-import { addDays, isoDate, fmtDate, minToHHMM, MIN_PER_DAY } from './time.js';
+import { addDays, isoDate, fmtDate, minToHHMM, MIN_PER_DAY, stableHash } from './time.js';
 
 const HARD = 1e6;
 const incompatible = new Set(INCOMPATIBLE_PAIRS.map(([a, b]) => `${a}|${b}`).concat(INCOMPATIBLE_PAIRS.map(([a, b]) => `${b}|${a}`)));
@@ -413,13 +413,19 @@ export function planHorizon({ corridor, feeds, tasks, days, planStart, weights =
 /* ------------------------------------------------------------------------ */
 
 export function materialise({ corridor, feeds, tasksById, assign, detail, days, planStart, label, weights, rules }) {
-  let n = 0;
+  const code = corridor.code.replace('–', '');
+  const seen = new Set();
   const blocks = detail.blocks
     .slice()
     .sort((a, b) => a.day - b.day || a.start - b.start)
     .map((b) => {
-      n++;
       const date = addDays(planStart, b.day);
+      // Content-derived id: the same works on the same day, line and window keep
+      // the same id across re-plans; any change yields a new block to approve.
+      const signature = `${b.day}|${b.line}|${b.start}|${b.end}|${b.items.map((it) => it.task.id).sort().join(',')}`;
+      let id = `BLK-${code}-${stableHash(signature)}`;
+      for (let k = 2; seen.has(id); k++) id = `BLK-${code}-${stableHash(`${signature}#${k}`)}`;
+      seen.add(id);
       const items = b.items.slice().sort((x, y) => x.a.start - y.a.start);
       const depts = [...new Set(items.map((it) => it.task.dept))];
       const kinds = new Set(items.map((it) => it.task.blockKind));
@@ -431,7 +437,7 @@ export function materialise({ corridor, feeds, tasksById, assign, detail, days, 
       const startKm = Math.min(...items.map((it) => it.task.startKm));
       const endKm = Math.max(...items.map((it) => it.task.endKm));
       return {
-        id: `BLK-${corridor.code.replace('–', '')}-${String(n).padStart(3, '0')}`,
+        id,
         day: b.day,
         date: isoDate(date),
         dateLabel: fmtDate(date),

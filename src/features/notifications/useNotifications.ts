@@ -10,6 +10,7 @@ import type { Dept } from '../../engine/types';
 import { can, type PortalId } from '../../auth/portals';
 import { useAppStore } from '../../store/useAppStore';
 import { usePortal } from '../../app/usePortal';
+import { routeForBlock, routeForReport, routeForTask } from '../palette/CommandPalette';
 
 export type NotificationType = 'CRITICAL' | 'WARNING' | 'INFO' | 'OK' | 'ACTION';
 
@@ -35,13 +36,24 @@ interface PlanEvent {
   tag?: string;
 }
 
+/** A pushed notification carries one route; send each portal to the page it can open. */
+function retarget(route: string | undefined, portal: PortalId, canAnyPortal: boolean): string | undefined {
+  if (!route) return undefined;
+  const q = new URLSearchParams(route.split('?')[1] ?? '');
+  if (q.get('block')) return routeForBlock(portal, q.get('block')!);
+  if (q.get('task')) return routeForTask(portal, q.get('task')!);
+  if (q.get('report')) return routeForReport(portal, q.get('report')!);
+  const target = route.split('/')[2];
+  if (route.startsWith('/app/') && target !== portal && !canAnyPortal) return undefined;
+  return route;
+}
+
 function routeForEvent(e: PlanEvent, portal: PortalId): string | undefined {
   if (e.linkType === 'task') {
     if (portal === 'tms' || portal === 'smms' || portal === 'tdms') return `/app/${portal}/register?task=${e.targetId}`;
-    if (portal === 'control') return `/app/control/blocks?task=${e.targetId}`;
-    return `/app/planning/risk?task=${e.targetId}`;
+    return routeForTask(portal, e.targetId ?? '');
   }
-  if (e.id.startsWith('EV-ROLLING')) return portal === 'division' ? '/app/division/programme' : '/app/planning/monthly';
+  if (e.id.startsWith('EV-ROLLING')) return portal === 'division' ? '/app/division/plans' : portal === 'planning' ? '/app/planning/monthly' : undefined;
   if (e.id.startsWith('EV-COLOC')) return portal === 'planning' ? '/app/planning/weekly' : undefined;
   return undefined;
 }
@@ -64,7 +76,7 @@ export function useNotifications(): { list: Notification[]; unread: number } {
     for (const p of pushed) {
       if (!p.portals.includes(portal)) continue;
       if (p.dept && user?.dept && p.dept !== user.dept) continue;
-      out.push({ id: p.id, at: p.at, type: p.kind, title: p.title, detail: p.body, route: p.route, read: isRead(p.id) });
+      out.push({ id: p.id, at: p.at, type: p.kind, title: p.title, detail: p.body, route: retarget(p.route, portal, user?.role === 'DRM' || user?.role === 'ADMIN'), read: isRead(p.id) });
     }
 
     if (snapshot) {
@@ -87,21 +99,21 @@ export function useNotifications(): { list: Notification[]; unread: number } {
         const ready = blocks.filter((b) => b.departments.every((d) => approvals[b.id]?.concur?.[d]) && (approvals[b.id]?.status ?? 'PROPOSED') === 'PROPOSED');
         if (ready.length) {
           const id = `ACT-GRANT-${ready.length}`;
-          out.push({ id, type: 'ACTION', title: `${ready.length} block${ready.length > 1 ? 's' : ''} fully concurred — ready to grant`, detail: ready.slice(0, 3).map((b) => `${b.id} ${b.sectionText} ${b.startText}`).join(' · '), tag: 'Grant', route: '/app/control/blocks', read: isRead(id) });
+          out.push({ id, type: 'ACTION', title: `${ready.length} block${ready.length > 1 ? 's' : ''} fully concurred — ready to grant`, detail: ready.slice(0, 3).map((b) => `${b.id} ${b.sectionText} ${b.startText}`).join(' · '), tag: 'Grant', route: '/app/control/board', read: isRead(id) });
         }
       }
       if (user && can(user, 'triage')) {
         const pendingReports = reports.filter((r) => r.status === 'UNVERIFIED' && r.corridorId === snapshot.corridor.id && (!dept || r.dept === dept || r.dept === null));
         if (pendingReports.length) {
           const id = `ACT-TRIAGE-${pendingReports.length}`;
-          out.push({ id, type: 'ACTION', title: `${pendingReports.length} field / citizen report${pendingReports.length > 1 ? 's' : ''} to triage`, detail: pendingReports.slice(0, 2).map((r) => r.description.slice(0, 60)).join(' · '), tag: 'Intake', route: portal === 'planning' ? '/app/planning/intake' : portal === 'control' ? '/app/control/incidents' : `/app/${portal}/reports`, read: isRead(id) });
+          out.push({ id, type: 'ACTION', title: `${pendingReports.length} field / citizen report${pendingReports.length > 1 ? 's' : ''} to triage`, detail: pendingReports.slice(0, 2).map((r) => r.description.slice(0, 60)).join(' · '), tag: 'Intake', route: portal === 'planning' ? '/app/planning/demands' : portal === 'control' ? '/app/control/incidents' : `/app/${portal}/incidents`, read: isRead(id) });
         }
       }
       if (user && can(user, 'plan')) {
         const submitted = requisitions.filter((r) => r.status === 'SUBMITTED' && r.corridorId === snapshot.corridor.id);
         if (submitted.length) {
           const id = `ACT-REQ-${submitted.length}`;
-          out.push({ id, type: 'ACTION', title: `${submitted.length} requisition${submitted.length > 1 ? 's' : ''} awaiting validation`, detail: submitted.slice(0, 3).map((r) => `${r.no} ${r.dept}`).join(' · '), tag: 'BDMS', route: '/app/planning/intake', read: isRead(id) });
+          out.push({ id, type: 'ACTION', title: `${submitted.length} requisition${submitted.length > 1 ? 's' : ''} awaiting validation`, detail: submitted.slice(0, 3).map((r) => `${r.no} ${r.dept}`).join(' · '), tag: 'BDMS', route: '/app/planning/demands', read: isRead(id) });
         }
       }
     }

@@ -41,7 +41,7 @@ export function CardFoot({ children }: { children: ReactNode }) {
 
 export function PageHeader({ title, lede, actions, badges, tour }: { title: ReactNode; lede?: ReactNode; actions?: ReactNode; badges?: ReactNode; tour?: string }) {
   return (
-    <div className="page-head" data-tour={tour}>
+    <div className="page-head" data-tour={tour ?? 'page-head'}>
       <div>
         {badges && <div className="row-wrap mb">{badges}</div>}
         <h1>{title}</h1>
@@ -126,9 +126,17 @@ export function UrgencyBadge({ urgency }: { urgency: Urgency }) {
   return <Badge tone={URGENCY_TONE[urgency]}>{URGENCY_LABEL[urgency]}</Badge>;
 }
 
+const STATUS_HI: Record<string, string> = {
+  PROPOSED: 'प्रस्तावित', GRANTED: 'प्रदान', LOCKED: 'लॉक', REFUSED: 'अस्वीकृत', RETURNED: 'लौटाया', REJECTED: 'अस्वीकृत',
+  UNVERIFIED: 'असत्यापित', TRIAGED: 'जाँच में', TASK: 'कार्य बना', RESOLVED: 'निपटाया', IN_PROGRESS: 'प्रगति में', COMPLETED: 'पूर्ण', CLOSED: 'बंद',
+  SUBMITTED: 'जमा', ACCEPTED: 'स्वीकृत', WITHDRAWN: 'वापस लिया', DRAFT: 'मसौदा', ISSUED: 'जारी', RECEIVED: 'प्राप्त', RECONNECTED: 'पुनः जुड़ा',
+  ACKNOWLEDGED: 'पावती दी', APPROVED: 'स्वीकृत', NOTICE_SHORTFALL: 'नोटिस कम', IN_FORCE: 'लागू', PENDING: 'लंबित', DEENERGISED: 'विद्युत बंद', ENERGISED: 'विद्युत चालू',
+};
+
 export function StatusBadge({ status }: { status: string }) {
+  const hi = useAppStore((st) => st.language) === 'hi';
   const tone: Tone = status === 'LOCKED' ? 'info' : status === 'GRANTED' ? 'ok' : status === 'RETURNED' || status === 'REJECTED' ? 'crit' : status === 'TASK' ? 'ok' : status === 'UNVERIFIED' ? 'warn' : status === 'IN_PROGRESS' ? 'warn' : status === 'COMPLETED' || status === 'CLOSED' ? 'ok' : status === 'NOTICE_SHORTFALL' ? 'crit' : 'gray';
-  const label = status.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  const label = hi && STATUS_HI[status] ? STATUS_HI[status] : status.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
   return <Badge tone={tone}>{label}</Badge>;
 }
 

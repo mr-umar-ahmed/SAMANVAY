@@ -182,3 +182,24 @@
 :root[data-theme='sunlight'] .btn-sm { height: 36px; }
 :root[data-theme='sunlight'] .btn-lg { height: 56px; font-size: 17px; }
 :root[data-theme='sunlight'] .card { border-width: 1.5px; }
+
+/* ── Aliases ─────────────────────────────────────────────────
+   Older page code uses these names. They map onto the real tokens above,
+   so light / dark / sunlight all stay correct without per-theme overrides. */
+:root {
+  --text: var(--ink);
+  --text-dim: var(--ink-3);
+  --muted: var(--ink-3);
+  --border: var(--line);
+  --border-hairline: var(--line);
+  --surface: var(--bg-1);
+  --card-bg: var(--bg-1);
+  --surface-sunken: var(--bg-2);
+  --bg-subtle: var(--bg-2);
+  --tint-blue: var(--pastel-blue);
+  --tint-pink: var(--pastel-pink);
+  --tint-accent: var(--accent-soft);
+  --pastel-amber: var(--pastel-yellow);
+  --on-amber: var(--on-yellow);
+  --font-sans: var(--font-ui);
+}
