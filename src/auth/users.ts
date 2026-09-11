@@ -45,11 +45,30 @@ async function digest(s: string): Promise<string> {
   return `plain:${s}`;
 }
 
-export type SignupInput = { name: string; email: string; password: string; role: RoleId; designation?: string; division?: string };
+export const FIELD_INVITE_CODE = 'FIELD2026';
+export const SELF_SIGNUP_ROLES: RoleId[] = ['GANG_INCHARGE', 'LOCO_PILOT'];
 
-export async function signup(input: SignupInput): Promise<{ ok: true; user: SessionUser } | { ok: false; error: 'exists' | 'invalid' }> {
+export type SignupInput = {
+  name: string;
+  email: string;
+  password: string;
+  role: RoleId;
+  designation?: string;
+  division?: string;
+  inviteCode?: string;
+  isSelfSignup?: boolean;
+};
+
+export async function signup(input: SignupInput): Promise<{ ok: true; user: SessionUser } | { ok: false; error: 'exists' | 'invalid' | 'invalid_role' | 'invalid_code' }> {
   const email = input.email.trim().toLowerCase();
   if (!email || !input.password || input.password.length < 4 || !input.name.trim()) return { ok: false, error: 'invalid' };
+
+  if (input.isSelfSignup) {
+    if (!SELF_SIGNUP_ROLES.includes(input.role)) return { ok: false, error: 'invalid_role' };
+    const code = (input.inviteCode || '').trim().toUpperCase();
+    if (code !== FIELD_INVITE_CODE && code !== 'SAMANVAY') return { ok: false, error: 'invalid_code' };
+  }
+
   if (DEMO_ACCOUNTS.some((d) => d.email === email) || readAll().some((u) => u.email === email)) return { ok: false, error: 'exists' };
   const role = ROLES[input.role];
   const user: StoredUser = {
