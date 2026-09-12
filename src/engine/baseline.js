@@ -17,10 +17,11 @@ import { evaluateWindow, tsrLossPerDay } from './delayModel.js';
 import { RULES, DEFAULT_WEIGHTS } from './constants.js';
 import { materialise } from './scheduler.js';
 
-export function planBaseline({ corridor, feeds, tasks, days, planStart, rules = RULES, weights = DEFAULT_WEIGHTS }) {
+export function planBaseline({ corridor, feeds, tasks, days, planStart, rules = RULES, weights = DEFAULT_WEIGHTS, feedsForDay = null }) {
   const r = { ...RULES, ...rules };
   const dayOccs = [];
-  for (let d = 0; d < days; d++) dayOccs.push(buildDayOccupancy(corridor, feeds, d, planStart));
+  // same weather as the optimised plan (fog nights re-time that day's trains), so the comparison stays like-for-like
+  for (let d = 0; d < days; d++) dayOccs.push(buildDayOccupancy(corridor, feedsForDay ? feedsForDay(d) : feeds, d, planStart));
   const tasksById = new Map(tasks.map((t) => [t.id, t]));
   const assign = new Map(tasks.map((t) => [t.id, null]));
   const granted = []; // {day, line, sections, start, end, dept}

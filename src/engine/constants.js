@@ -103,8 +103,33 @@ export const DEFAULT_WEIGHTS = {
   risk: 900,           // per unit ARCI of an unscheduled task per horizon day of waiting
   colocation: 120,     // bonus per additional department sharing a block
   tsr: 4.0,            // per train-minute lost to speed restrictions while a task waits
-  spread: 25           // penalty per block (encourages fewer, fuller blocks)
+  spread: 25,          // penalty per block (encourages fewer, fuller blocks)
+  preference: 40       // requisition preferences: per day away from the preferred day; 3× this for a start outside the preferred window
 };
+
+/** Multiple of `weights.preference` charged when a work starts outside the window its requisition asked for. */
+export const PREFERENCE_WINDOW_FACTOR = 3;
+
+/**
+ * Train lateness used by the block window-reliability Monte-Carlo.
+ * ASSUMPTIONS, not measured: SAMANVAY has no punctuality feed. A train runs
+ * on time with probability `onTime`; otherwise its lateness is exponential
+ * with mean `meanLateMin` minutes. Replace with NTES / COA punctuality
+ * statistics when available.
+ */
+export const TRAIN_LATENESS = {
+  VB: { onTime: 0.85, meanLateMin: 4 },
+  RAJ: { onTime: 0.75, meanLateMin: 6 },
+  SHT: { onTime: 0.75, meanLateMin: 6 },
+  SF: { onTime: 0.65, meanLateMin: 10 },
+  EXP: { onTime: 0.6, meanLateMin: 12 },
+  PASS: { onTime: 0.55, meanLateMin: 15 },
+  PARCEL: { onTime: 0.4, meanLateMin: 30 },
+  GOODS: { onTime: 0.3, meanLateMin: 45 }
+};
+
+/** Dispersion (sd of log actual/planned duration) assumed when a work type has fewer than 3 execution records. */
+export const DEFAULT_DURATION_SD = 0.18;
 
 /** Hard planning rules. */
 export const RULES = {
@@ -117,7 +142,7 @@ export const RULES = {
   maxBlocksPerDay: 5,          // possessions a divisional control can supervise per day on one corridor
   maxConcurrentBlocks: 2,      // simultaneous line closures on the corridor
   annealT0: 300,               // simulated-annealing start temperature (cost units)
-  nightWindow: [0, 300],       // 00:00–05:00 preferred for noisy capital work near stations
+  nightWindow: [1320, 300],    // 22:00–05:00 (wraps midnight): the "night" preference of a requisition
   noticeWeeksForRegulation: 10 // JPO advance notice when a block needs passenger train regulation
 };
 

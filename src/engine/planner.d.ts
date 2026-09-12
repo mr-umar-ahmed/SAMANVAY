@@ -1,4 +1,4 @@
-import type { Corridor, Rules, Scenario, Snapshot, Task, Weights, WeeklyResult, MonthlyResult, Rolling, InjectSpec, FixedBlockConstraint } from './types';
+import type { Corridor, Rules, Scenario, Snapshot, Task, Weights, WeeklyResult, MonthlyResult, Rolling, InjectSpec, FixedBlockConstraint, PlanRequest, WeatherDay, ConstructFn, Anomaly } from './types';
 
 export const DEFAULT_PLAN_START: string;
 export function parsePlanStart(s?: string): Date;
@@ -22,6 +22,7 @@ export interface PlanningContext {
     failureHistory: Record<string, { t: number; failed: boolean }[]>;
     escalationHistory: Record<string, number | boolean>[];
     executionLog: Snapshot['feeds']['executionLog'];
+    weather?: WeatherDay[];
   };
   factors: Snapshot['factors'];
   tasks: Task[];
@@ -40,11 +41,32 @@ export interface PlanningContext {
   meanAge: Record<string, number>;
   scenario: Scenario | null;
   rolling: Rolling;
+  /** records imported from department files (request pass-through; wired by the data layer) */
+  imported: PlanRequest['imported'];
+  /** weather supplied with the request (pass-through; wired by the data layer) */
+  weatherOverride: WeatherDay[] | null;
+  /** planning effect of each day's weather (fog night cap, rain / wind / heat screens) */
+  weatherEffects: Array<{ nightSpeedCapKmph: number | null; outdoorPenalty: number; avoidWorkTypes: string[]; daytimeAvoidWorkTypes: string[]; heatBucklingRisk: boolean; railTempC: number | null; reasons: string[] }>;
+  /** plan days with a fog night (trains re-timed under the fog cap that night) */
+  fogDays: number[];
+  feedsForDay: ((day: number) => PlanningContext['feeds']) | null;
+  anomalies: Anomaly[];
+  /** ARCI bootstrap run: resamples and time taken */
+  bands: { samples: number; timeMs: number };
 }
 
 export function createContext(
   corridorId: string,
-  opts?: { seed?: number; planStart?: string; feeds?: PlanningContext['feeds'] | null; scenario?: Scenario | null }
+  opts?: {
+    seed?: number;
+    planStart?: string;
+    feeds?: PlanningContext['feeds'] | null;
+    scenario?: Scenario | null;
+    imported?: PlanRequest['imported'];
+    weather?: WeatherDay[] | null;
+    /** ARCI bootstrap resamples (0 = no bands) */
+    bootstrapSamples?: number;
+  }
 ): PlanningContext;
 
 export interface PlanningResult {
@@ -57,7 +79,17 @@ export interface PlanningResult {
 
 export function runPlanning(
   ctx: PlanningContext,
-  opts?: { weights?: Partial<Weights>; rules?: Partial<Rules>; iterations?: number; seed?: number; fixedBlocks?: FixedBlockConstraint[] }
+  opts?: {
+    weights?: Partial<Weights>;
+    rules?: Partial<Rules>;
+    iterations?: number;
+    seed?: number;
+    fixedBlocks?: FixedBlockConstraint[];
+    /** construction for the WEEKLY horizon (e.g. MILP); annealing polishes it */
+    construct?: ConstructFn | null;
+    /** requested solver (recorded; 'milp' without `construct` falls back to greedy with a reason) */
+    solver?: PlanRequest['solver'] | null;
+  }
 ): PlanningResult;
 
 export function applyScenario(corridor: Corridor, feeds: PlanningContext['feeds'], scenario: Scenario, planStart: Date): PlanningContext['feeds'];

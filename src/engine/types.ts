@@ -51,6 +51,15 @@ export interface CorridorBlock {
   toKm: number;
 }
 
+export interface Signal {
+  id: string;
+  kind: string;
+  stationCode: string;
+  km: number;
+  line: Line;
+  label: string;
+}
+
 export interface Corridor {
   id: string;
   code: string;
@@ -69,6 +78,7 @@ export interface Corridor {
   lines: RunLine[];
   blockSections: BlockSection[];
   oheSections: OheSection[];
+  signals?: Signal[];
 }
 
 export interface TrainTime {
@@ -156,9 +166,32 @@ export interface Risk {
   urgency: Urgency;
   urgencyLabel: string;
   mandatory: boolean;
+  /** 'A' safety ≥ 0.95 and due / TSR; 'B' safety ≥ 0.8 with TSR in force or overdue; null otherwise */
+  mandatoryRule?: 'A' | 'B' | null;
+  /** plain-English reason for the mandatory floor (null when not mandatory) */
+  mandatoryReason?: string | null;
   weibull: { beta: number; eta: number };
   explanation: RiskExplanation[];
   mlContributions: { key: string; value: number; contribution: number }[];
+  /** bootstrap uncertainty band of ARCI (always contains `arci`) */
+  band?: ArciBand;
+}
+
+export interface ArciBand {
+  /** 5th percentile of bootstrap ARCI (widened to the point estimate if needed) */
+  low: number;
+  /** 95th percentile of bootstrap ARCI (widened to the point estimate if needed) */
+  high: number;
+  samples: number;
+  method: string;
+}
+
+/** Which task values came from the requisition that injected it (UI provenance). */
+export interface InjectedFields {
+  sourceId: string | null;
+  fields: Array<'duration' | 'window' | 'preferredDay' | 'machine' | 'blockKind' | 'dependsOn' | 'coRequireWith' | 'replaces'>;
+  /** e.g. "Duration and window from requisition REQ/REQ-0012" */
+  note: string;
 }
 
 export interface Task {
@@ -205,6 +238,23 @@ export interface Task {
   risk: Risk;
   injected?: boolean;
   groupId?: string;
+  /** injected works: a block the work must join (joint-block suggestion) */
+  targetBlock?: { day: number; line: Line; start: number; end: number } | null;
+  /** 'requisition' when the requested duration was used as given, else 'calibrated' */
+  durationSource?: 'requisition' | 'calibrated';
+  /** traffic / power block that also needs an S&T disconnection (requisition `requires`) */
+  needsDisconnection?: boolean;
+  requires?: Array<'POWER_BLOCK' | 'DISCONNECTION'>;
+  /** soft preferences from the requisition (plan day 0-based; 'night' = RULES.nightWindow) */
+  preferredDay?: number | null;
+  preferredWindow?: 'night' | 'day' | null;
+  /** task ids that must end before this work starts (resolved from sourceIds) */
+  dependsOn?: string[] | null;
+  /** task ids that must share this work's block (mutual) */
+  coRequireWith?: string[] | null;
+  /** register task this requisition replaces (dropped from the run) */
+  replacesTaskId?: string | null;
+  injectedFields?: InjectedFields | null;
 }
 
 export interface AffectedTrain {
@@ -268,7 +318,59 @@ export interface Block {
   weightedDelayMin: number;
   rawDelayMin: number;
   premiumConflicts: number;
+  /** made only of works of an approved (fixed) block — keeps that block's id */
+  fixed?: boolean;
+  /** other windows for this block (whole-block move) or for its highest-ARCI work */
+  alternatives?: BlockAlternative[];
+  confidence?: BlockConfidence;
   status: string;
+}
+
+/** Another window for a work (or a whole block), everything else held. */
+export interface BlockAlternative {
+  day: number;
+  line: Line;
+  start: number;
+  end: number;
+  startText: string;
+  endText: string;
+  /** change in total plan cost if moved there (negative = cheaper) */
+  deltaCost: number;
+  /** of the block the work would sit in */
+  weightedDelayMin: number;
+  trainsAffected: number;
+  premiumConflicts: number;
+  /** no hard constraint broken anywhere in the plan */
+  feasible: boolean;
+  /** the hard rule it would break, when not feasible */
+  reason: string | null;
+  /** e.g. "Same night, 50 min later", "Thursday 23:10, UP line" */
+  note: string;
+  /** 'block' = whole block moved with every work keeping its offset; 'task' = only this work moved */
+  scope: 'task' | 'block';
+}
+
+/** Computed confidence of a block (0–1). */
+export interface BlockConfidence {
+  /** P(all works finish in the time available) — lognormal durations learned from the execution log */
+  completion: number;
+  /** Monte-Carlo P(no late train path intrudes into the window) — train lateness is an assumption */
+  windowReliability: number;
+  /** completion × windowReliability */
+  overall: number;
+  basis: string;
+  /** minute of day the work can run to (end of the free window containing the block, or the block end) */
+  availableUntil: number;
+}
+
+export interface SafetyConflict {
+  taskId: string;
+  label: string;
+  dueDay: number;
+  placedDay: number | null;
+  /** plain English, e.g. "No free window on or before its due day", "Machine / gang not available", "Rule: blocks per day" */
+  reason: string;
+  detail: string | null;
 }
 
 export interface Weights {
@@ -278,6 +380,8 @@ export interface Weights {
   colocation: number;
   tsr: number;
   spread: number;
+  /** requisition preferences: per day away from preferredDay; 3× for a start outside preferredWindow */
+  preference: number;
 }
 
 export interface Rules {
@@ -310,6 +414,8 @@ export interface Plan {
   blocks: Block[];
   scheduled: { taskId: string; day: number; line: Line; start: number; end: number }[];
   deferred: { taskId: string; arci: number; urgency: Urgency; reason: string }[];
+  /** every mandatory work deferred or placed after max(0, dueDay) (or placed without a machine / gang), with a reason */
+  safetyConflicts: SafetyConflict[];
   cost: {
     total: number;
     delay: number;
@@ -317,15 +423,22 @@ export interface Plan {
     spread: number;
     waiting: number;
     deferred: number;
+    /** requisition preference penalty (absent on older snapshots) */
+    preference?: number;
     colocationBonus: number;
     hard: number;
+    /** plain-text list of every hard constraint broken (empty when feasible) */
     hardReasons: string[];
   };
-  resourceViolations: { taskId: string; type: 'MACHINE' | 'CREW'; detail: string }[];
+  resourceViolations: ResourceViolation[];
   machineUse: Record<string, ResourceUse[]>;
   crewUse: Record<string, ResourceUse[]>;
   weights: Weights;
   rules: Rules;
+  /** optimiser plans only: up to 3 other windows per scheduled non-fixed work, ranked by deltaCost */
+  alternatives?: Record<string, BlockAlternative[]>;
+  /** optimiser plans only: how each fixed (approved) block was held */
+  fixedReport?: FixedBlockReport[];
   search: {
     iterations: number;
     greedyCost: number;
@@ -334,8 +447,34 @@ export interface Plan {
     accepted: number;
     timeMs: number;
     candidateCount: number;
+    /** optimiser plans only */
+    searchMs?: number;
+    alternativesMs?: number;
+    confidenceMs?: number;
+    solver?: 'greedy+sa' | 'milp+sa';
+    /** metadata returned by the MILP construction, when used */
+    milp?: MilpMeta | null;
+    /** why the requested / supplied construction was not used */
+    fallbackReason?: string | null;
   };
   tsrLossPerDay?: Record<string, number>;
+}
+
+export interface ResourceViolation {
+  taskId: string;
+  type: 'MACHINE' | 'CREW';
+  detail: string;
+}
+
+export interface FixedBlockReport {
+  id: string | null;
+  day: number;
+  taskIds: string[];
+  heldTaskIds: string[];
+  /** works of the approved block no longer in the register (attended / excluded) */
+  missingTaskIds: string[];
+  held: boolean;
+  note: string | null;
 }
 
 export interface KpiAssumptions {
@@ -359,6 +498,10 @@ export interface Kpis {
   highRiskWithin72hRate: number;
   mandatoryTotal: number;
   mandatoryCompliant: number;
+  /** plan.safetyConflicts.length (absent on older snapshots) */
+  safetyConflicts?: number;
+  /** mean block confidence.overall (null when the plan has no confidence, e.g. the baseline) */
+  meanBlockConfidence?: number | null;
   colocationRate: number;
   coLocatedBlocks: number;
   deptsPerBlock: number;
@@ -511,6 +654,19 @@ export interface ClassifierMetrics {
   confusion: { tp: number; fp: number; tn: number; fn: number };
 }
 
+export interface DurationFactor {
+  factor: number;
+  samples: number;
+  meanRatio: number;
+  overrunRate: number;
+  /** records used for the spread (= samples) */
+  n?: number;
+  /** mean of log(actual / planned) */
+  meanLog?: number;
+  /** sd of log(actual / planned); the block completion model uses 0.18 when n < 3 */
+  sdLog?: number;
+}
+
 export interface ExecutionLogRecord {
   workType: string;
   plannedMin: number;
@@ -542,9 +698,11 @@ export interface Snapshot {
     executionLog: ExecutionLogRecord[];
     failureHistoryCounts: Record<string, number>;
     escalationHistoryCount: number;
+    weather?: WeatherDay[];
   };
   counts: { TMS: number; SMMS: number; TDMS: number; total: number; rejected: number };
   issues: DataIssue[];
+  anomalies?: Anomaly[];
   pairs: { a: string; b: string; sections: number[] }[];
   tasks: Task[];
   models: {
@@ -552,7 +710,7 @@ export interface Snapshot {
     escalationMetrics: { test: ClassifierMetrics; train: ClassifierMetrics; nTrain: number; nTest: number };
     escalation: { keys: string[]; w: number[]; b: number; mean: number[]; sd: number[] };
   };
-  factors: Record<string, { factor: number; samples: number; meanRatio: number; overrunRate: number }>;
+  factors: Record<string, DurationFactor>;
   tsrLossPerDay: Record<string, number>;
   assetPopulation: Record<string, number>;
   density: { dens: Record<string, number>; max: number };
@@ -583,16 +741,31 @@ export interface InjectSpec {
   conditionIndex?: number;
   groupId?: string | null;
   targetBlock?: { day: number; line: Line; start: number; end: number } | null;
+  /** planned only on this corridor (skipped by runs of other corridors) */
+  corridorId?: string;
+  /** work minutes requested; used as given instead of the work type's calibrated duration */
+  durationMin?: number;
+  /** soft preference: plan day 0–6 (weight `preference` per day away) */
+  preferredDay?: number;
+  /** soft preference: 'night' = RULES.nightWindow (wraps midnight), 'day' = outside it */
+  preferredWindow?: 'night' | 'day' | 'any';
+  /** machine type (MACHINE_TYPES key) or unit id; null = no machine */
+  machine?: string | null;
+  blockKind?: 'TRAFFIC' | 'POWER' | 'TRAFFIC + POWER' | 'DISCONNECTION';
+  requires?: Array<'POWER_BLOCK' | 'DISCONNECTION'>;
+  /** sourceIds or task ids that must be finished before this work starts (hard) */
+  dependsOn?: string[];
+  /** sourceIds or task ids that must share this work's block (hard) */
+  coRequireWith?: string[];
+  /** register task id this requisition replaces (dropped from the run) */
+  replacesTaskId?: string;
 }
 
-export interface FixedBlockConstraint {
-  id?: string;
-  day: number;
-  line: Line;
-  start: number;
-  end: number;
-  taskIds: string[];
-}
+export interface FixedBlockConstraint { id?: string; day: number; line: Line; start: number; end: number; taskIds: string[]; /** per-task windows as they were when fixed */ tasks?: { id: string; start: number; end: number }[] }
+
+export interface WeatherDay { day: number; date: string; fogNight: boolean; visibilityM: number | null; rainMm: number; maxTempC: number; windKmph: number | null; source: 'seeded' | 'open-meteo' }
+
+export interface Anomaly { id: string; kind: 'OVERRUN' | 'FAILURE_SPIKE' | 'DATA'; severity: 'high' | 'medium' | 'low'; title: string; detail: string; ref?: string; value?: number; expected?: number; z?: number }
 
 export interface Scenario {
   id?: string;
@@ -607,6 +780,9 @@ export interface Scenario {
   extraExecution?: ExecutionLogRecord[];
 }
 
+/** Imported register rows: a plain list is appended; { records, mode: 'replace' } swaps the seeded register. */
+export type ImportedRegister = Record<string, unknown>[] | { records: Record<string, unknown>[]; mode?: 'append' | 'replace' };
+
 export interface PlanRequest {
   corridorId: string;
   weights?: Partial<Weights>;
@@ -618,9 +794,75 @@ export interface PlanRequest {
   pinnedTaskIds?: string[];
   /** dropped before ranking (attended, withdrawn) */
   excludedTaskIds?: string[];
-  /** started or locked blocks held fixed as solver constraints during re-planning */
+  /** concurred / granted / locked / in-progress blocks held fixed as solver constraints on every run */
   fixedBlocks?: FixedBlockConstraint[];
+  /** construction for the weekly plan: 'sa' greedy + annealing (default), 'milp' MILP + annealing when wired */
+  solver?: 'sa' | 'milp';
+  /** records imported from TMS / SMMS / TDMS files (passed through to the planning context) */
+  imported?: { tms?: ImportedRegister; smms?: ImportedRegister; tdms?: ImportedRegister } | null;
+  /** weather for the plan days (passed through to the planning context) */
+  weather?: WeatherDay[] | null;
 }
+
+/** One candidate window of a task in the optimiser (scheduler.js candidatesFor). */
+export interface SolverCandidate {
+  day: number;
+  line: Line;
+  start: number;
+  end: number;
+  gap: number;
+  fixed?: boolean;
+  fixedBlockId?: string | null;
+}
+
+/** Arguments handed to an external construction (e.g. the MILP) by planHorizon. */
+export interface ConstructArgs {
+  tasks: Task[];
+  cands: Map<string, SolverCandidate[]>;
+  dayOccs: unknown[];
+  rules: Rules;
+  weights: Weights;
+  tasksById: Map<string, Task>;
+  machines: Machine[];
+  crews: Crew[];
+  days: number;
+  tsrLoss: Map<string, number>;
+  fixedAssignments: Map<string, SolverCandidate>;
+  allowPremium: boolean;
+  /** per-day planning effect of the weather (weather.js weatherEffects), when known */
+  weather?: unknown[] | null;
+}
+
+/** What the exact MILP construction (src/engine/milp.js, HiGHS) reports about its solve. */
+export interface MilpMeta {
+  /** e.g. "HiGHS 1.15.1 (WebAssembly, branch-and-cut)" */
+  solver: string;
+  model: string;
+  /** HiGHS model status, e.g. "Optimal" or "Time limit reached" */
+  status: string;
+  optimal: boolean;
+  /** which construction won: 'MILP' or 'greedy construction' */
+  source: string;
+  objective: number | null;
+  bound: number | null;
+  gapPct: number | null;
+  planCost: number;
+  planGapPct: number | null;
+  greedyCost: number;
+  timeMs: number;
+  solveSec: number;
+  variables: number;
+  binaries: number;
+  constraints: number;
+  scheduled: number;
+  deferred: number;
+  mandatoryUnplaced: string[];
+  approximations: string[];
+  [k: string]: unknown;
+}
+
+/** Must return, for every task id, one of its candidates (same fields) or null; may throw. */
+export type ConstructFn = (args: ConstructArgs) => { assign: Map<string, SolverCandidate | null>; meta?: unknown };
 
 export type WorkerMessage =
   | { id: number; type: 'progress'; step: string; text: string }

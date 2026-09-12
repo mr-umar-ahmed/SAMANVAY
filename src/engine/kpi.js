@@ -28,6 +28,8 @@ export function computeKpis(plan, corridor, tasks, assumptions = KPI_ASSUMPTIONS
   const highWithin72 = highRisk.filter((t) => byDay.has(t.id) && byDay.get(t.id) <= 2).length;
   const mandatory = tasks.filter((t) => t.risk.mandatory);
   const mandatoryDone = mandatory.filter((t) => byDay.has(t.id) && byDay.get(t.id) <= Math.max(0, t.dueDay)).length;
+  const withConfidence = plan.blocks.filter((b) => b.confidence);
+  const meanBlockConfidence = withConfidence.length ? withConfidence.reduce((s, b) => s + b.confidence.overall, 0) / withConfidence.length : null;
 
   const closureTasks = scheduledTasks.filter((t) => t.closure === 'LINE');
   const coLocatedTaskIds = new Set(plan.blocks.filter((b) => b.coLocated).flatMap((b) => b.tasks.map((x) => x.id)));
@@ -73,6 +75,8 @@ export function computeKpis(plan, corridor, tasks, assumptions = KPI_ASSUMPTIONS
     highRiskWithin72hRate: highRisk.length ? highWithin72 / highRisk.length : 1,
     mandatoryTotal: mandatory.length,
     mandatoryCompliant: mandatoryDone,
+    safetyConflicts: Array.isArray(plan.safetyConflicts) ? plan.safetyConflicts.length : mandatory.length - mandatoryDone,
+    meanBlockConfidence,
     colocationRate,
     coLocatedBlocks: closureBlocks.filter((b) => b.coLocated).length,
     deptsPerBlock,

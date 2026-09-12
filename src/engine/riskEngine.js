@@ -14,12 +14,15 @@
  *          (stricter) TSR in 30 days if not attended.
  *   S_safe safety severity of the work type (USFD IMR & interlocking = 1.0).
  *
- * Mandatory rule: safety ≥ 0.95 with the work due (or a TSR already in force)
- * floors ARCI at 0.92 — these are scheduled first regardless of cost.
+ * Mandatory rules floor ARCI at 0.92 and make the optimiser place the work on
+ * or before its due day before any efficiency trade-off:
+ *   A. safety ≥ 0.95 with the work due (or a TSR already in force);
+ *   B. safety ≥ 0.8 with a TSR in force or the work overdue.
  */
 import { fitWeibull, conditionalFailure, weibullSummary } from './weibull.js';
 import { LogisticModel } from './logistic.js';
 import { ASSET_CLASS_PARAMS } from './dataFactory.js';
+import { createRng } from './random.js';
 
 export const URGENCY = [
   { key: 'IMMEDIATE', min: 0.85, label: 'Immediate (≤ 24 h)', days: 1 },
@@ -76,8 +79,31 @@ export function trafficDensity(corridor, timetable, freight, days = 7) {
   return { dens, max, key };
 }
 
-export function scoreTask(task, models, density, corridor) {
-  const w = models.weibull[task.assetClass] || { beta: 1.5, eta: 1500 };
+/** ARCI floor applied to mandatory work. */
+export const MANDATORY_FLOOR = 0.92;
+
+/**
+ * Mandatory rules (safety overrides efficiency):
+ *   A. safety ≥ 0.95 and the work is due (daysOverdue ≥ 0) or a TSR is in force;
+ *   B. safety ≥ 0.8 and a TSR is in force or the work is overdue (daysOverdue > 0).
+ * Returns null when neither applies, else { rule, text }.
+ */
+export function mandatoryRule(task) {
+  const tsr = !!task.tsrKmph;
+  if (task.safety >= 0.95 && (task.daysOverdue >= 0 || tsr)) {
+    const why = tsr ? `TSR ${task.tsrKmph} km/h in force` : task.daysOverdue > 0 ? `${task.daysOverdue} d overdue` : 'due now';
+    return { rule: 'A', text: `Mandatory: safety severity ${task.safety.toFixed(2)} ≥ 0.95 and ${why} — placed on or before its due day before any cost trade-off` };
+  }
+  if (task.safety >= 0.8 && (tsr || task.daysOverdue > 0)) {
+    const why = [tsr ? `TSR ${task.tsrKmph} km/h in force` : null, task.daysOverdue > 0 ? `${task.daysOverdue} d overdue` : null].filter(Boolean).join(' and ');
+    return { rule: 'B', text: `Mandatory: safety severity ${task.safety.toFixed(2)} ≥ 0.8 with ${why} — placed on or before its due day before any cost trade-off` };
+  }
+  return null;
+}
+
+/** The numeric part of ARCI, reusable by the bootstrap (no side effects). */
+function arciParts(task, wfit, escalationModel, density, corridor) {
+  const w = wfit || { beta: 1.5, eta: 1500 };
   const pfWindow = conditionalFailure(task.ageDays, 30, w.beta, w.eta);
   const pfBlend = 0.6 * pfWindow + 0.4 * task.conditionIndex;
 
@@ -95,22 +121,25 @@ export function scoreTask(task, models, density, corridor) {
   const features = {
     daysOverdue: task.daysOverdue,
     conditionIndex: task.conditionIndex,
-    gmtLoad: task.metrics.gmt || 35,
+    gmtLoad: (task.metrics && task.metrics.gmt) || 35,
     ageRatio: task.ageDays / (w.eta || 1),
     safety: task.safety,
     hasTsr: task.tsrKmph ? 1 : 0
   };
-  const escalation = models.escalation.trained ? models.escalation.predict(features) : 0.5;
+  const escalation = escalationModel && escalationModel.trained ? escalationModel.predict(features) : 0.5;
 
   let arci = Math.sqrt(task.safety) * (0.3 * pfBlend + 0.25 * odi + 0.25 * overdue + 0.2 * escalation);
   const tsrUplift = task.tsrKmph ? 0.1 : 0;
   arci += tsrUplift;
-  let mandatory = false;
-  if (task.safety >= 0.95 && (task.daysOverdue >= 0 || task.tsrKmph)) {
-    arci = Math.max(arci, 0.92);
-    mandatory = true;
-  }
+  const rule = mandatoryRule(task);
+  if (rule) arci = Math.max(arci, MANDATORY_FLOOR);
   arci = Math.min(1, Math.max(0, arci));
+  return { w, pfWindow, pfBlend, traffic, odi, overdue, features, escalation, tsrUplift, arci, rule };
+}
+
+export function scoreTask(task, models, density, corridor) {
+  const { w, pfWindow, pfBlend, traffic, odi, overdue, features, escalation, tsrUplift, arci, rule } = arciParts(task, models.weibull[task.assetClass], models.escalation, density, corridor);
+  const mandatory = !!rule;
   const urgency = urgencyOf(arci);
 
   const explanation = [
@@ -119,11 +148,73 @@ export function scoreTask(task, models, density, corridor) {
     { key: 'odi', label: 'Operational disruption index', value: odi, weight: 0.25, text: `${traffic.toFixed(1)} weighted trains/day on ${task.sectionLabel}${task.tsrKmph ? `, TSR ${task.tsrKmph} km/h` : ''}` },
     { key: 'overdue', label: 'Overdue penalty', value: overdue, weight: 0.25, text: task.daysOverdue > 0 ? `${task.daysOverdue} d overdue against ${task.mandatoryWithinDays} d rule` : `due in ${-task.daysOverdue} d` },
     { key: 'escalation', label: 'ML escalation probability', value: escalation, weight: 0.2, text: 'logistic model on historical escalation register' },
-    { key: 'safety', label: 'Safety severity multiplier', value: task.safety, weight: null, text: mandatory ? 'Mandatory: scheduled first' : 'square root scales the weighted sum' }
+    { key: 'safety', label: 'Safety severity multiplier', value: task.safety, weight: null, text: mandatory ? `${rule.text}; ARCI floored at ${MANDATORY_FLOOR}` : 'square root scales the weighted sum' }
   ];
 
-  task.risk = { pfWindow, pfBlend, odi, traffic, overdue, escalation, tsrUplift, arci, urgency: urgency.key, urgencyLabel: urgency.label, mandatory, weibull: { beta: w.beta, eta: w.eta }, explanation, mlContributions: models.escalation.trained ? models.escalation.contributions(features) : [] };
+  task.risk = { pfWindow, pfBlend, odi, traffic, overdue, escalation, tsrUplift, arci, urgency: urgency.key, urgencyLabel: urgency.label, mandatory, mandatoryRule: rule ? rule.rule : null, mandatoryReason: rule ? rule.text : null, weibull: { beta: w.beta, eta: w.eta }, explanation, mlContributions: models.escalation.trained ? models.escalation.contributions(features) : [] };
   return task.risk;
+}
+
+/**
+ * ARCI uncertainty band by bootstrap: the Weibull fits (per asset class) and
+ * the escalation logistic model are re-fitted on resampled registers, every
+ * task is re-scored with each refit, and the 5th–95th percentile of the
+ * resulting ARCI values is reported. The band is widened to include the
+ * point estimate when the point lies outside it (skewed resamples), so it is
+ * always an interval around the published ARCI. Seeded → reproducible.
+ * Sets task.risk.band = { low, high, samples, method }.
+ */
+export function bootstrapArciBands(tasks, feeds, models, density, corridor, { samples = 30, seed = 26027, holdout = 0.25, epochs = 60 } = {}) {
+  if (!tasks.length) return { samples: 0, timeMs: 0 };
+  const t0 = Date.now();
+  const rng = createRng(seed ^ 0x5bd1e995);
+  const resample = (arr) => {
+    const out = new Array(arr.length);
+    for (let i = 0; i < arr.length; i++) out[i] = arr[Math.floor(rng.next() * arr.length)];
+    return out;
+  };
+  const hist = feeds.escalationHistory || [];
+  const trainSet = hist.slice(0, Math.floor(hist.length * (1 - holdout)));
+  const classes = [...new Set(tasks.map((t) => t.assetClass))];
+  const values = tasks.map(() => []);
+  for (let b = 0; b < samples; b++) {
+    const wb = {};
+    for (const cls of classes) {
+      const recs = feeds.failureHistory && feeds.failureHistory[cls];
+      if (!recs || !recs.length) {
+        wb[cls] = models.weibull[cls];
+        continue;
+      }
+      const fit = fitWeibull(resample(recs), { maxIter: 40, tol: 1e-5 });
+      wb[cls] = fit.failures > 0 ? fit : models.weibull[cls];
+    }
+    let esc = models.escalation;
+    if (trainSet.length && models.escalation.trained) {
+      // warm start from the point fit: fewer epochs reach the refit optimum
+      esc = new LogisticModel(models.escalation.keys);
+      esc.w = models.escalation.w.slice();
+      esc.b = models.escalation.b;
+      esc.fit(resample(trainSet), { epochs });
+    }
+    tasks.forEach((t, i) => values[i].push(arciParts(t, wb[t.assetClass], esc, density, corridor).arci));
+  }
+  const pct = (sorted, p) => {
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  };
+  tasks.forEach((t, i) => {
+    const s = values[i].sort((a, c) => a - c);
+    const low = Math.min(pct(s, 0.05), t.risk.arci);
+    const high = Math.max(pct(s, 0.95), t.risk.arci);
+    t.risk.band = { low: round3(low), high: round3(high), samples, method: `bootstrap: ${samples} resamples of the failure and escalation registers, Weibull MLE refit + logistic refit (warm-started, ${epochs} epochs); 5th–95th percentile of ARCI` };
+  });
+  return { samples, timeMs: Date.now() - t0 };
+}
+
+function round3(x) {
+  return Math.round(x * 1000) / 1000;
 }
 
 function conditionText(task) {

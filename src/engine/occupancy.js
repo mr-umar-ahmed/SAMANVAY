@@ -98,6 +98,28 @@ export function commonFreeWindows(dayOcc, sections, line, minLen, margin) {
   return acc || [];
 }
 
+/**
+ * The free window (common to the sections / lines, headway margin applied)
+ * that contains minute `at`, or null when `at` lies on a train path.
+ * Used for the time actually available to a block that starts at `at`.
+ */
+export function freeWindowAt(dayOcc, sections, line, at, margin) {
+  const ws = commonFreeWindows(dayOcc, sections, line, 0, margin);
+  for (const w of ws) if (w.start <= at && at < w.end) return w;
+  return null;
+}
+
+/**
+ * Whether a minute of the day lies inside a [from, to) window that may wrap
+ * midnight (e.g. the night window [1320, 300] = 22:00–05:00).
+ */
+export function inDailyWindow(minute, win) {
+  if (!win || win.length < 2) return false;
+  const m = ((minute % MIN_PER_DAY) + MIN_PER_DAY) % MIN_PER_DAY;
+  const [from, to] = win;
+  return from <= to ? m >= from && m < to : m >= from || m < to;
+}
+
 /** Occupancy summary for heat-maps: trains per hour per section/line. */
 export function hourlyLoad(dayOcc, corridor) {
   const rows = [];

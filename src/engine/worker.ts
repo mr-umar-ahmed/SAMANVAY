@@ -8,7 +8,9 @@ import { createContext, runPlanning } from './planner.js';
 import { buildRolling } from './horizons.js';
 import { hourlyLoad } from './occupancy.js';
 import { isoDate } from './time.js';
-import type { DayOccupancy, DistributiveOmit, PlanRequest, Snapshot, WorkerMessage } from './types';
+import type { ConstructFn, DayOccupancy, DistributiveOmit, PlanRequest, Snapshot, WorkerMessage } from './types';
+import { loadHighs } from './highsLoader';
+import { makeMilpConstruct } from './milp.js';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -24,13 +26,27 @@ function serialiseOcc(dayOccs: OccInternal[], corridor: Snapshot['corridor']): D
   }));
 }
 
-self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
-  const { id, corridorId, weights, rules, iterations, scenario, seed, pinnedTaskIds = [], excludedTaskIds = [], fixedBlocks = [] } = ev.data;
+/** HiGHS is loaded once per worker; a failed load is retried on the next run. */
+let highsPromise: Promise<unknown> | null = null;
+async function milpConstruct(): Promise<{ construct: ConstructFn | null; note: string | null }> {
+  try {
+    if (!highsPromise) highsPromise = loadHighs();
+    const highs = await highsPromise;
+    return { construct: makeMilpConstruct(highs, { timeLimitSec: 6 }) as ConstructFn, note: null };
+  } catch (e) {
+    highsPromise = null;
+    return { construct: null, note: `MILP solver could not load: ${(e as Error).message}` };
+  }
+}
+
+self.onmessage = async (ev: MessageEvent<PlanRequest & { id: number }>) => {
+  const { id, corridorId, weights, rules, iterations, scenario, seed, pinnedTaskIds = [], excludedTaskIds = [], fixedBlocks = [], solver, imported = null, weather = null } = ev.data;
   const post = (m: DistributiveOmit<WorkerMessage, 'id'>) => self.postMessage({ id, ...m } as WorkerMessage);
   const t0 = Date.now();
   try {
     post({ type: 'progress', step: 'ingest', text: 'Reading COA timetable, FOIS forecast and the TMS / SMMS / TDMS registers' });
-    const ctx = createContext(corridorId, { seed: seed || 26027, scenario: scenario || null });
+    // imported / weather are carried on the context (ctx.imported, ctx.weatherOverride) for the data layer
+    const ctx = createContext(corridorId, { seed: seed || 26027, scenario: scenario || null, imported, weather });
     post({
       type: 'progress',
       step: 'risk',
@@ -50,6 +66,9 @@ self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
         t.risk.arci = Math.max(t.risk.arci, 0.92);
         t.risk.urgency = 'IMMEDIATE';
         t.risk.urgencyLabel = 'Immediate (≤ 24 h)';
+        if (!t.risk.mandatoryReason) t.risk.mandatoryReason = 'Mandatory: pinned by the planner for this run';
+        // the floor applies to every bootstrap resample too
+        if (t.risk.band) t.risk.band = { ...t.risk.band, low: Math.max(t.risk.band.low, 0.92), high: Math.max(t.risk.band.high, t.risk.arci) };
         if (t.dueDay > 1) t.dueDay = 1;
         t.risk.explanation.push({ key: 'pinned', label: 'Pinned by planner', value: 1, weight: null, text: 'raised to the mandatory floor for this run' });
       }
@@ -57,8 +76,18 @@ self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
     // The 26-week programme was built inside createContext; rebuild it so it never
     // references a work that was just excluded (buildMonthly expands its entries).
     if (excludedTaskIds.length || pinnedTaskIds.length) ctx.rolling = buildRolling(ctx);
-    post({ type: 'progress', step: 'weekly', text: 'Optimising the weekly plan (greedy construction + simulated annealing)' });
-    const result = runPlanning(ctx, { weights, rules, iterations, fixedBlocks });
+    // exact MILP construction (HiGHS, WebAssembly) unless the planner chose greedy + annealing
+    const wantMilp = (solver ?? 'milp') === 'milp';
+    let construct: ConstructFn | null = null;
+    if (wantMilp) {
+      post({ type: 'progress', step: 'weekly', text: 'Loading the MILP solver (HiGHS WebAssembly)' });
+      const m = await milpConstruct();
+      construct = m.construct;
+      if (!construct && m.note) post({ type: 'progress', step: 'weekly', text: `${m.note} — using greedy construction` });
+    }
+    post({ type: 'progress', step: 'weekly', text: construct ? 'Optimising the weekly plan (exact MILP, HiGHS branch-and-cut ≤ 6 s, then simulated annealing)' : 'Optimising the weekly plan (greedy construction + simulated annealing)' });
+    const weatherFx = ctx.weatherEffects || null;
+    const result = runPlanning(ctx, { weights, rules, iterations, fixedBlocks, solver: wantMilp ? 'milp' : 'sa', construct: construct ? ((i) => (construct as ConstructFn)({ ...i, weather: weatherFx })) : null });
     post({ type: 'progress', step: 'monthly', text: 'Monthly plan and 26-week programme assembled' });
 
     const strip = <T extends { dayOccs?: unknown }>(p: T) => {
@@ -83,7 +112,9 @@ self.onmessage = (ev: MessageEvent<PlanRequest & { id: number }>) => {
         executionLog: ctx.feeds.executionLog,
         failureHistoryCounts: Object.fromEntries(Object.entries(ctx.feeds.failureHistory).map(([k, v]) => [k, v.length])),
         escalationHistoryCount: ctx.feeds.escalationHistory.length,
+        weather: ctx.feeds.weather,
       },
+      anomalies: ctx.anomalies,
       counts: ctx.counts,
       issues: ctx.issues,
       pairs: ctx.pairs,

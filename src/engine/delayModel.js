@@ -15,7 +15,8 @@
  * JPO notice.
  */
 import { passages } from './occupancy.js';
-import { RULES } from './constants.js';
+import { RULES, TRAIN_LATENESS } from './constants.js';
+import { createRng } from './random.js';
 
 export function evaluateWindow(dayOcc, sections, line, start, end, rules = RULES, { allowPremium = false } = {}) {
   const lines = line === 'BOTH' ? ['UP', 'DN'] : [line];
@@ -74,6 +75,55 @@ export function evaluateWindow(dayOcc, sections, line, start, end, rules = RULES
   const weightedDelayMin = trains.reduce((a, t) => a + t.weightedDelay, 0);
   const rawDelayMin = trains.reduce((a, t) => a + t.delayMin, 0);
   return { trains, weightedDelayMin, rawDelayMin, premiumConflicts, feasible: premiumConflicts === 0 || allowPremium };
+}
+
+/**
+ * Window reliability: Monte-Carlo probability that no train path intrudes
+ * into the protected block window [start − margin, end + margin) when trains
+ * run late. Only trains scheduled to clear the sections *before* the window
+ * can intrude (lateness only delays); trains already inside the window are
+ * the ones the delay model plans around (SLW / held) and are excluded via
+ * `exclude`. Lateness per class comes from TRAIN_LATENESS (assumptions).
+ * One lateness draw per train per sample, shared by all its passages.
+ */
+export function windowReliability(dayOcc, sections, line, start, end, rules = RULES, { samples = 100, seed = 1, exclude = null, lateness = TRAIN_LATENESS } = {}) {
+  const lines = line === 'BOTH' ? ['UP', 'DN'] : [line];
+  const s0 = start - rules.headwayMarginMin;
+  const e0 = end + rules.headwayMarginMin;
+  const threats = new Map(); // trainId -> { cls, passages: [{enter, exit}] }
+  for (const l of lines) {
+    for (const s of sections) {
+      for (const p of passages(dayOcc, s, l)) {
+        if (p.exit > s0) continue; // inside or after the window
+        if (exclude && exclude.has(p.trainId)) continue;
+        let th = threats.get(p.trainId);
+        if (!th) threats.set(p.trainId, (th = { cls: p.cls, list: [] }));
+        th.list.push(p);
+      }
+    }
+  }
+  if (!threats.size) return { probability: 1, samples: 0, threats: 0 };
+  const rng = createRng(seed >>> 0);
+  const ths = [...threats.values()];
+  let clean = 0;
+  for (let k = 0; k < samples; k++) {
+    let hit = false;
+    for (const th of ths) {
+      const lp = lateness[th.cls] || lateness.EXP;
+      const u = rng.next();
+      const late = u < lp.onTime ? 0 : -lp.meanLateMin * Math.log(1 - rng.next());
+      if (late <= 0) continue;
+      for (const p of th.list) {
+        if (p.exit + late > s0 && p.enter + late < e0) {
+          hit = true;
+          break;
+        }
+      }
+      if (hit) break;
+    }
+    if (!hit) clean++;
+  }
+  return { probability: clean / samples, samples, threats: ths.length };
 }
 
 /**

@@ -1,4 +1,5 @@
-import type { Rolling } from './types';
+import type { Rolling, Rules } from './types';
 import type { PlanningContext } from './planner';
 
-export function buildRolling(ctx: PlanningContext): Rolling;
+/** 26-week Rolling Block Programme; `rules.noticeWeeksForRegulation` sets the JPO notice (default RULES). */
+export function buildRolling(ctx: PlanningContext, rules?: Partial<Rules>): Rolling;

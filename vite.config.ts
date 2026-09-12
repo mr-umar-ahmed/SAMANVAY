@@ -33,11 +33,14 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // wasm: the HiGHS MILP solver (highs.wasm, ~3.5 MB) must plan offline too
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2,wasm}'],
         // the preloader video is streamed, never precached
         globIgnores: ['**/media/*.mp4', '**/media/*.webm'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: '/index.html',
+        // notification click → open the route the app attached (public/sw-notify.js)
+        importScripts: ['sw-notify.js'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
@@ -55,6 +58,8 @@ export default defineConfig({
     }),
   ],
   worker: { format: 'es' },
+  // pre-bundle the HiGHS loader so the planning worker's first import does not trigger a dev reload
+  optimizeDeps: { include: ['highs'] },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1200,

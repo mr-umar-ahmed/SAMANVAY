@@ -4,126 +4,190 @@
  * Pure isomorphic ES module.
  */
 
+/**
+ * Every preset's location is relative to the corridor it is applied to
+ * (`anchor` below): a fraction of the corridor length snapped to a real TSS,
+ * junction, station or block section of that corridor, so the injected work
+ * always lies inside the corridor. On New Delhi – Kanpur the anchors give
+ * the original km 166 / 131 / 210 / 300.
+ */
 export const SCENARIO_PRESETS = [
   {
     id: 'OHE_CATENARY_SAG',
     name: 'OHE Catenary Sag at km 166 (TSS-HRS)',
     category: 'Traction Distribution (TDMS)',
-    description: 'Sudden catenary droop detected under high ambient heat near Hathras Jn. Injects emergency contact-wire renewal with 60 km/h TSR and power isolation block.',
+    description: 'Sudden catenary droop under high ambient heat at the traction sub-station nearest 38 % of the corridor length. Injects emergency contact-wire renewal with 60 km/h TSR and power isolation block.',
     icon: 'tdms',
-    defaultParams: { km: 166, line: 'DN', tsr: 60 }
+    defaultParams: { anchor: 'TSS', fraction: 166 / 440, lengthKm: 0.8, line: 'DN', tsr: 60 }
   },
   {
     id: 'EI_AXLE_COUNTER_FAILURE',
     name: 'Electronic Interlocking / Axle Counter Drop',
     category: 'Signal & Telecom (SMMS)',
-    description: 'Axle counter failure at Aligarh Jn interlocking. Mandatory card replacement with S&T disconnection notice and temporary SLW section capacity cut.',
+    description: 'Axle counter failure at the interlocking of the junction nearest 30 % of the corridor length. Mandatory card replacement with S&T disconnection notice and temporary SLW section capacity cut.',
     icon: 'smms',
-    defaultParams: { km: 131, line: 'UP' }
+    defaultParams: { anchor: 'JUNCTION', fraction: 131 / 440, lengthKm: 0.2, line: 'UP' }
   },
   {
     id: 'USFD_IMR_FRACTURE',
     name: 'USFD IMR Immediate Rail Flaw',
     category: 'Civil Engineering (TMS)',
-    description: 'Ultrasonic flaw detector flags severe internal transverse flaw (IMR) requiring emergency joggled fish-plate and weld replacement within 24 hours under 30 km/h TSR.',
+    description: 'Ultrasonic flaw detector flags a severe internal transverse flaw (IMR) inside the block section at 48 % of the corridor length, requiring emergency joggled fish-plate and weld replacement within 24 hours under 30 km/h TSR.',
     icon: 'tms',
-    defaultParams: { km: 210, line: 'DN', tsr: 30 }
+    defaultParams: { anchor: 'SECTION', fraction: 210 / 440, lengthKm: 0.3, line: 'DN', tsr: 30 }
   },
   {
     id: 'DENSE_WINTER_FOG',
     name: 'Dense Winter Fog (Speed Cap 60 km/h)',
     category: 'Operations / Weather',
-    description: 'Visibility drops below 100 metres during night hours (22:00–08:00). Timetable speeds restricted to 60 km/h, compressing available headway gaps and stressing recovery margins.',
+    description: 'Visibility drops below 1000 metres during night hours. Trains running between 22:00 and 08:00 are restricted to 60 km/h; day paths keep their timings. Night headway gaps shrink and recovery margins tighten.',
     icon: 'corridor',
-    defaultParams: { speedCap: 60 }
+    defaultParams: { speedCap: 60, from: '22:00', to: '08:00' }
   },
   {
     id: 'MONSOON_BRIDGE_WATCH',
     name: 'Monsoon Flash Flood & Bridge Pier Watch',
     category: 'Civil Engineering (TMS)',
-    description: 'Water level breaches danger mark at major river bridge (km 300). Imposes 20 km/h caution order with single-line working and freight rake regulation.',
+    description: 'Water level breaches the danger mark at the major bridge next to the station nearest 68 % of the corridor length. Imposes 20 km/h caution order with single-line working and freight rake regulation.',
     icon: 'tms',
-    defaultParams: { km: 300, line: 'BOTH', tsr: 20 }
+    defaultParams: { anchor: 'STATION', fraction: 300 / 440, lengthKm: 0.5, line: 'BOTH', tsr: 20 }
   }
 ];
 
+const r1 = (x) => Math.round(x * 10) / 10;
+
+/**
+ * Corridor-relative location of a preset: returns { startKm, endKm, where }
+ * with 0 ≤ startKm < endKm ≤ corridor length and a real reference.
+ *   TSS      – the traction sub-station nearest fraction × length
+ *   JUNCTION – the junction station nearest fraction × length
+ *   STATION  – the intermediate station nearest fraction × length
+ *   SECTION  – fraction × length, kept 0.5 km clear of both stations of its block section
+ */
+export function anchorLocation(corridor, anchor, fraction, lengthKm) {
+  const L = corridor.lengthKm;
+  const target = Math.max(0, Math.min(L, fraction * L));
+  const nearest = (list) => list.reduce((b, x) => (Math.abs(x.km - target) < Math.abs(b.km - target) ? x : b), list[0]);
+  const fit = (km) => {
+    let a = r1(km);
+    if (a + lengthKm > L) a = r1(L - lengthKm - 0.1);
+    if (a < 0) a = 0;
+    return { startKm: a, endKm: r1(a + lengthKm) };
+  };
+  if (anchor === 'TSS' && corridor.tss && corridor.tss.length) {
+    const t = nearest(corridor.tss);
+    return { ...fit(t.km), where: `${t.code}, km ${t.km}` };
+  }
+  if (anchor === 'JUNCTION' || anchor === 'STATION') {
+    const inner = corridor.stations.slice(1, -1);
+    let list = anchor === 'JUNCTION' ? corridor.stations.filter((s) => s.junction) : inner;
+    if (!list.length) list = corridor.stations;
+    const s = nearest(list);
+    return { ...fit(s.km), where: `${s.name} (${s.code}), km ${s.km}` };
+  }
+  const sec = corridor.blockSections.find((s) => target >= s.startKm && target <= s.endKm) || corridor.blockSections[corridor.blockSections.length - 1];
+  const lo = sec.startKm + 0.5;
+  const hi = Math.max(lo, sec.endKm - lengthKm - 0.5);
+  const km = Math.min(hi, Math.max(lo, target));
+  return { ...fit(km), where: `${sec.label}, km ${r1(km)}` };
+}
+
+function presetLocation(presetId, corridor, customParams) {
+  const p = SCENARIO_PRESETS.find((x) => x.id === presetId);
+  const d = p.defaultParams;
+  if (typeof customParams.km === 'number' && Number.isFinite(customParams.km)) {
+    const L = corridor.lengthKm;
+    const a = r1(Math.min(Math.max(0, customParams.km), L - d.lengthKm));
+    return { startKm: a, endKm: r1(a + d.lengthKm), where: `km ${a}` };
+  }
+  return anchorLocation(corridor, d.anchor, d.fraction, d.lengthKm);
+}
+
 export function buildScenarioFromPreset(presetId, corridor, customParams = {}) {
-  const midKm = Math.round(corridor.lengthKm / 2);
   switch (presetId) {
     case 'OHE_CATENARY_SAG': {
-      const km = customParams.km || 166;
+      const loc = presetLocation(presetId, corridor, customParams);
       return {
         id: presetId,
         name: 'OHE Catenary Sag',
+        location: loc.where,
         injectTasks: [
           {
             workType: 'CONTACT_WIRE_RENEWAL',
             line: customParams.line || 'DN',
-            startKm: km,
-            endKm: km + 0.8,
+            startKm: loc.startKm,
+            endKm: loc.endKm,
             daysOverdue: 0,
             tsrKmph: 60,
-            note: 'Emergency catenary droop sag'
+            note: `Emergency catenary droop sag near ${loc.where}`
           }
         ]
       };
     }
     case 'EI_AXLE_COUNTER_FAILURE': {
-      const km = customParams.km || 131;
+      const loc = presetLocation(presetId, corridor, customParams);
       return {
         id: presetId,
         name: 'EI / Axle Counter Drop',
+        location: loc.where,
         injectTasks: [
           {
             workType: 'EI_CARD_REPLACEMENT',
             line: customParams.line || 'UP',
-            startKm: km,
-            endKm: km + 0.2,
+            startKm: loc.startKm,
+            endKm: loc.endKm,
             daysOverdue: 0,
-            note: 'Signal failure - EI card replacement'
+            note: `Signal failure at ${loc.where} - EI card replacement`
           }
         ]
       };
     }
     case 'USFD_IMR_FRACTURE': {
-      const km = customParams.km || 210;
+      const loc = presetLocation(presetId, corridor, customParams);
       return {
         id: presetId,
         name: 'USFD IMR Rail Flaw',
+        location: loc.where,
         injectTasks: [
           {
             workType: 'USFD_IMR_RAIL',
             line: customParams.line || 'DN',
-            startKm: km,
-            endKm: km + 0.3,
+            startKm: loc.startKm,
+            endKm: loc.endKm,
             daysOverdue: 0,
             tsrKmph: 30,
-            note: 'IMR rail flaw emergency'
+            note: `IMR rail flaw emergency, ${loc.where}`
           }
         ]
       };
     }
     case 'DENSE_WINTER_FOG': {
+      const d = SCENARIO_PRESETS.find((x) => x.id === presetId).defaultParams;
+      // The cap applies only to runs between 22:00 and 08:00. planner.applyScenario
+      // must honour speedCapWindow (weather.applyWeatherToPassages); without it the
+      // older code path re-times every path all day.
       return {
         id: presetId,
         name: 'Dense Winter Fog',
-        speedCapKmph: customParams.speedCap || 60
+        speedCapKmph: customParams.speedCap || d.speedCap,
+        speedCapWindow: { from: customParams.from || d.from, to: customParams.to || d.to }
       };
     }
     case 'MONSOON_BRIDGE_WATCH': {
-      const km = customParams.km || 300;
+      const loc = presetLocation(presetId, corridor, customParams);
       return {
         id: presetId,
         name: 'Monsoon Bridge Watch',
+        location: loc.where,
         injectTasks: [
           {
             workType: 'BRIDGE_GIRDER',
             line: 'BOTH',
-            startKm: km,
-            endKm: km + 0.5,
+            startKm: loc.startKm,
+            endKm: loc.endKm,
             daysOverdue: 0,
             tsrKmph: 20,
-            note: 'Bridge scour / high water warning'
+            note: `Bridge scour / high water warning near ${loc.where}`
           }
         ]
       };

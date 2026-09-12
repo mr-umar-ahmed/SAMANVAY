@@ -18,8 +18,8 @@ import { RULES, WORK_TYPES, MACHINE_TYPES } from './constants.js';
 
 export function buildWeekly(ctx, opts = {}) {
   const tasks = ctx.tasks.filter((t) => !t.capital);
-  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 7, planStart: ctx.planStart, weights: opts.weights, rules: opts.rules, fixedBlocks: opts.fixedBlocks };
-  const ai = planHorizon({ ...common, iterations: opts.iterations ?? 6000, seed: opts.seed ?? 7, label: 'weekly-ai' });
+  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 7, planStart: ctx.planStart, weights: opts.weights, rules: opts.rules, fixedBlocks: opts.fixedBlocks, feedsForDay: ctx.feedsForDay || null, weather: ctx.weatherEffects || null };
+  const ai = planHorizon({ ...common, iterations: opts.iterations ?? 6000, seed: opts.seed ?? 7, label: 'weekly-ai', construct: opts.construct || null, requestedSolver: opts.solver || null, factors: ctx.factors, alternatives: { perTask: 30 } });
   const baseline = planBaseline({ ...common, label: 'weekly-baseline' });
   const tsrLossPerDay = Object.fromEntries(tasks.map((t) => [t.id, ctx.tsrLossPerDay[t.id] || 0]));
   ai.tsrLossPerDay = tsrLossPerDay;
@@ -40,12 +40,14 @@ function expandCapital(task, weeksAhead) {
 }
 
 export function buildMonthly(ctx, opts = {}) {
-  const rolling = ctx.rolling || buildRolling(ctx);
+  const rolling = opts.rolling || ctx.rolling || buildRolling(ctx, opts.rules);
   const capitalInMonth = rolling.entries.filter((e) => e.week <= 4 && e.status !== 'NOTICE_SHORTFALL');
-  const capitalTasks = capitalInMonth.flatMap((e) => expandCapital(ctx.tasks.find((t) => t.id === e.taskId), e.week));
+  const capitalTasks = capitalInMonth.map((e) => ctx.tasks.find((t) => t.id === e.taskId)).filter(Boolean).flatMap((t) => expandCapital(t, rolling.entries.find((e) => e.taskId === t.id).week));
   const tasks = ctx.tasks.filter((t) => !t.capital).concat(capitalTasks);
-  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 30, planStart: ctx.planStart, weights: opts.weights, rules: opts.rules };
-  const ai = planHorizon({ ...common, iterations: opts.iterations ?? 3500, seed: opts.seed ?? 11, label: 'monthly-ai' });
+  // approved blocks of the coming week are held in the monthly plan too
+  const fixedBlocks = (opts.fixedBlocks || []).filter((b) => b && b.day >= 0 && b.day <= 6);
+  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 30, planStart: ctx.planStart, weights: opts.weights, rules: opts.rules, fixedBlocks, feedsForDay: ctx.feedsForDay || null, weather: ctx.weatherEffects || null };
+  const ai = planHorizon({ ...common, iterations: opts.iterations ?? 3500, seed: opts.seed ?? 11, label: 'monthly-ai', factors: ctx.factors, alternatives: { perTask: opts.alternativesPerTask ?? 12 } });
   const baseline = planBaseline({ ...common, label: 'monthly-baseline' });
   const tsrLossPerDay = Object.fromEntries(tasks.map((t) => [t.id, ctx.tsrLossPerDay[t.groupId || t.id] || 0]));
   ai.tsrLossPerDay = tsrLossPerDay;
@@ -65,8 +67,8 @@ export function buildMonthly(ctx, opts = {}) {
 /**
  * 26-week Rolling Block Programme.
  */
-export function buildRolling(ctx) {
-  const corridor = ctx.corridor;
+export function buildRolling(ctx, rules = RULES) {
+  const noticeWeeks = rules && Number.isFinite(rules.noticeWeeksForRegulation) ? rules.noticeWeeksForRegulation : RULES.noticeWeeksForRegulation;
   const capital = ctx.tasks.filter((t) => t.capital).slice().sort((a, b) => (a.targetWeek || 26) - (b.targetWeek || 26));
   const weeks = [];
   for (let w = 1; w <= 26; w++) {
@@ -77,7 +79,7 @@ export function buildRolling(ctx) {
   const entries = [];
   for (const t of capital) {
     const regulationNeeded = t.workType === 'BRIDGE_GIRDER' || t.workType === 'CTR' || t.totalMin > 300;
-    const noticeNeeded = regulationNeeded ? RULES.noticeWeeksForRegulation : 3;
+    const noticeNeeded = regulationNeeded ? noticeWeeks : 3;
     const noticeGiven = t.noticeWeeksGiven || 0;
     let week = Math.max(t.targetWeek || 6, regulationNeeded ? Math.max(1, noticeNeeded - noticeGiven + 1) : 1);
     // machine capacity per week
@@ -117,7 +119,7 @@ export function buildRolling(ctx) {
     }
     return { week: wk.week, per, total };
   });
-  return { entries, weeks, forecast, noticeRule: RULES.noticeWeeksForRegulation };
+  return { entries, weeks, forecast, noticeRule: noticeWeeks };
 }
 
 export function workTypeLabel(wt) {
