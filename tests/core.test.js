@@ -93,9 +93,14 @@ test('timetable respects COA corridor blocks and passages are monotonic', () => 
 test('normaliser maps every feed record onto the network graph', () => {
   const c = CORRIDORS[1];
   const feeds = buildFeeds(c);
-  const { tasks, counts } = normalize(c, feeds, learnDurationFactors(feeds.executionLog));
-  assert.equal(counts.rejected, 0);
-  assert.equal(tasks.length, feeds.tms.length + feeds.smms.length + feeds.tdms.length);
+  const { tasks, counts, rejects } = normalize(c, feeds, learnDurationFactors(feeds.executionLog));
+  // every record except the labelled data-quality test records is mapped
+  const all = [...feeds.tms, ...feeds.smms, ...feeds.tdms];
+  const dq = all.filter((r) => r.dq);
+  assert.ok(dq.length >= 5);
+  assert.equal(counts.rejected, dq.length);
+  assert.ok(rejects.every((r) => r.dq), 'only data-quality test records are rejected');
+  assert.equal(tasks.length, all.length - dq.length);
   for (const t of tasks) {
     assert.ok(t.sections.length >= 1);
     assert.ok(t.startKm >= 0 && t.endKm <= c.lengthKm);

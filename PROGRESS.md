@@ -2,9 +2,9 @@
 
 Live tracker for [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md). Updated at the end of every work session and whenever a phase item changes.
 
-**Branch:** `rebuild-v4` (local; not yet pushed to GitHub)
-**Last updated:** 2026-09-11
-**Health:** typecheck clean · 15/15 engine tests pass · production build OK
+**Branch:** `rebuild-v4` (local changes in progress)
+**Last updated:** 2026-09-12
+**Health:** typecheck clean · 67/67 engine & workflow tests pass · production build OK (108 precache entries)
 
 ---
 
@@ -12,67 +12,44 @@ Live tracker for [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md). Updated at the end 
 
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| 0 | Framing and contracts | ✅ done | `docs/v4-spec.md`, `docs/CONTRACT.md`, this plan |
-| 1 | Planning engine | ✅ done | `fixedBlocks` solver constraint & joint-block `groupId` implemented & tested |
-| 2 | Foundation | ✅ done | Self sign-up restricted to field roles with invite code |
-| 3 | Component kit and viz | ✅ done | |
-| 4 | Portal pages | ✅ done | 8 portals, all routes built, EN+HI, tour anchors |
-| 5 | End-to-end workflows | 🔵 in QA | Workflow tests passing; JPO loop verified up to "send week to Control" |
-| 6 | Honesty audit | ✅ done | Automated honesty grep (`check-honesty.js`) & contrast test (`check-contrast.js`) |
-| 7 | Language and accessibility | 🟡 mostly done | Intake messages bilingual (EN+HI); keyboard/SR pass pending |
-| 8 | Mobile, PWA, citizen | 🟡 mostly done | Offline check and Lighthouse pending |
-| 9 | Browser QA | 🔵 in progress | See QA checklist below |
-| 10 | Build, tests, release hygiene | 🟡 partial | 18/18 tests passing, honesty/contrast scripts wired, lint clean |
-| 11 | Demo and submission | ⬜ not started | Deploy, rehearse, record, deck screenshots |
-| 12 | Future scope | ⬜ later | Only after Phase 11 |
+| 0 | Framing and contracts | ✅ done | `docs/v4-spec.md`, `docs/CONTRACT.md`, `docs/PPT-COMPLIANCE.md`, `docs/MILP-FORMULATION.md` |
+| 1 | Planning engine | ✅ done | Exact MILP (HiGHS WebAssembly) + SA polish, weather constraints, anomaly detection, fixed blocks hold |
+| 2 | Foundation | ✅ done | Cross-tab broadcast bus (`crossTab.ts`), service worker notifications, RBAC with ADEN/JE roles |
+| 3 | Component kit and viz | ✅ done | `SolverStamp`, `SafetyBanner`, `ConflictsPanel`, `SupersededList`, `CorridorRuler`, `NetworkMap` |
+| 4 | Portal pages | ✅ done | 8-step live `WorkflowPage`, native register CSV/JSON importer, geo-triage auto-severity |
+| 5 | End-to-end workflows | ✅ done | 7/7 operational loops automated & verified in `tests/store-workflow.test.js` & `tests/workflow.test.js` |
+| 6 | Honesty audit | ✅ done | Automated honesty scan (`check-honesty.js`) passes (41 files), WCAG AA contrast verified |
+| 7 | Language and accessibility | ✅ done | Staff EN+HI, Citizen 8 languages, bilingual validation errors and factor breakdowns |
+| 8 | Mobile, PWA, citizen | ✅ done | Offline PWA with IndexedDB photo storage, sunlight theme for field, push notifications |
+| 9 | Browser QA | 🔵 in progress | Multi-role cross-tab workflow testing on 1280 px and 375 px |
+| 10 | Build, tests, release hygiene | ✅ done | 67/67 tests passing (`npm test`), 0 TypeScript errors, bundle built in 1.3s |
+| 11 | Demo and submission | 🟡 ready | Deck alignment (`docs/PPT-COMPLIANCE.md`), live workflow script, demo corridor seeds |
+| 12 | Future scope | ⬜ later | Multi-division network scaling, live ISRO-RTIS WebSocket feeds |
 
-Legend: ✅ done · 🟡 mostly done (gaps listed) · 🔵 in progress · ⬜ not started
+Legend: ✅ done · 🟡 mostly done / ready · 🔵 in progress · ⬜ not started
 
 ---
 
 ## What is built
 
-- **Engine** — seeded native-schema feeds (COA, FOIS, TMS, SMMS, TDMS), normaliser onto one corridor graph, Weibull + logistic risk models, ARCI, occupancy and headway windows, delay model, greedy + simulated-annealing scheduler with `fixedBlocks` constraint support, decentralised FIFO baseline, weekly / 30-day / 26-week horizons, caution orders (T/409, T/409B, T/351), advisories, ROI, copilot, BDMS export. Runs in a Web Worker. Block ids are content-stable across re-plans.
-- **Foundation** — zustand store with versioned persistence (v3 migration) and first-class data issue status, 8 portals with roles and capabilities, invite-code protected field self-signup, 13 demo accounts (password `samanvay`), EN/HI + 8 citizen languages, deck palette with light / dark / sunlight themes, shell with sidebar / top bar / mobile bar, train video preloader, PWA install, driver.js tour per portal, Ctrl+K palette, notifications.
-- **Pages** — screens in each portal's menu: Planning 13, Control 11, each department 9, Division 9, Field 5, Citizen 3 tabs plus train and station pages, public 4 (landing, login, sign-up, install). All computed from the plan; no stub text.
-
-## Browser QA checklist
-
-Tested in the in-app browser. ✔ = passed, ✖ = failed (see issues), blank = not yet run.
-
-| Area | Check | Result |
-|---|---|---|
-| Citizen (375 px) | Home renders, language chips, first-visit tour | ✔ |
-| Citizen (375 px) | Train search suggestions → train page | ✔ |
-| Citizen | Station page, report with photo + GPS, my reports, install | |
-| Planning (1100 px) | Overview tiles and KPIs | ✔ |
-| Planning | Weekly Gantt renders (29 bars), legend readable | ✔ |
-| Planning | Send week to Control → hand-off shows 29 awaiting concurrence | ✔ |
-| Planning | Demands accept/return, risk explain/pin, optimiser run/promote, scenarios, adherence recalibrate, integration | |
-| Departments | Concur / object as Sr DEN, Sr DSTE, Sr DEE | |
-| Departments | Register → raise requisition; forms (TSR, T/351, power block); incidents | |
-| Control | Grant / grant with change / refuse / lock D+1 as SC | |
-| Control | Caution order issue + print; re-plan apply; incidents TSR | |
-| Field | Gang Start / Done / Clear; LP acknowledge caution | |
-| Citizen | Advisories appear after grant | |
-| Division | Brief, approvals, escalations, ROI, admin, audit | |
-| Cross-cutting | Dark and sunlight themes: all text visible | |
-| Cross-cutting | Ctrl+K routes, notifications, tours on every portal | |
-
-## Open issues
-
-| # | Issue | Where | Status |
-|---|---|---|---|
-| 1 | Sidebar shows "22 blocks" (line closures only) while the week has 29 blocks (7 disconnection-only); the send toast says 29 | `src/app/AppShell.tsx` | ✅ fixed `8c709c7` |
-| 2 | Any staff role, including DRM and System Administrator, can self-register | `src/pages/auth/SignupPage.tsx` | ✅ fixed |
-| 3 | Re-plan keeps started/locked blocks by workflow status, not as a solver constraint (`fixedBlocks`) | `src/engine/scheduler.js`, `worker.ts`, `ReplanPage.tsx` | ✅ fixed |
-| 4 | "Accept join" for joint-block suggestions has no engine support (`groupId`) | `src/engine/planner.js`, store, `WeeklyPlanPage.tsx` | ✅ fixed |
-| 5 | Data-quality issue status is recorded in the audit trail only | store / `IntegrationPage` | ✅ fixed |
-| 6 | Requisition validation messages are English-only | `src/engine/intake.js`, `DeptRegisterPage.tsx` | ✅ fixed |
-| 7 | No automated honesty grep or theme contrast test | `scripts/check-honesty.js`, `scripts/check-contrast.js` | ✅ fixed |
-| 8 | Top-bar title truncated at laptop widths | `src/app/shell.css` | ✅ fixed `8c709c7` |
+- **Engine** — seeded native-schema feeds (COA, FOIS, TMS, SMMS, TDMS), normaliser onto digital corridor graph with signals twin, Weibull + logistic risk models, ARCI with bootstrap confidence bands, occupancy and headway windows, delay model, **exact MILP solver (HiGHS WebAssembly) with simulated-annealing polish**, weather-aware constraints (fog, rain, rail temp), anomaly detection, decentralised FIFO baseline, weekly / 30-day / 26-week horizons, caution orders (T/409, T/409B, T/351), advisories, ROI, copilot, BDMS export. Runs in a Web Worker. Block ids are content-stable across re-plans.
+- **Foundation** — zustand store with versioned persistence, cross-tab event bus (`crossTab.ts`) for multi-role live demos, service worker notifications (`sw-notify.js`), first-class data issue status with 5 standard codes, 8 portals with roles (including ADEN, JE, Gang In-charge, Loco Pilot), invite-code protected field self-signup, demo accounts, EN/HI + 8 citizen languages, deck palette with light / dark / sunlight themes, shell with sidebar / top bar / mobile bar, PWA install, driver.js tour, Ctrl+K palette, notifications.
+- **Pages & Components** — 8-step interactive operational `WorkflowPage`, Planning 13, Control 11, each department 9, Division 9, Field 5, Citizen 3 tabs plus train and station pages, public 4. All computed from the plan; zero stub text. Native CSV/JSON register importer, geo-triage auto-severity preview, `SafetyBanner`, `SolverStamp`, `ConflictsPanel`, `SupersededList`.
 
 ## Session log
+
+- **2026-09-12** — **SIH 2026 PS 26027 & Presentation Deck Compliance Round**:
+  - Audited prototype against `SIH2026-FINAL-PPT.pdf` and recorded findings in `docs/PPT-COMPLIANCE.md`.
+  - Implemented exact MILP solver using **HiGHS WebAssembly** (`src/engine/milp.js`, `highsLoader.ts`, `docs/MILP-FORMULATION.md`) as the primary construction phase with simulated annealing polish, proving optimality gaps on IR corridors.
+  - Added Digital Twin signals, points, track circuits, and LC gates table (`src/engine/corridors.js`) with gear-id and mast resolution (`tests/twin.test.js`).
+  - Added weather engine (`src/engine/weather.js`) with regional seasonal seeds and Open-Meteo integration; constraints enforce fog speed caps and extreme heat buckling rules.
+  - Implemented anomaly detection (`src/engine/anomaly.js`) identifying speed restriction clusters and repeat component failures.
+  - Added native CSV/JSON import adapters (`src/engine/importer.js`) with strict schema validation and 5 rejection codes.
+  - Created 8-step live operational `WorkflowPage.tsx` demonstrating end-to-end PS 26027 workflow with direct deep links.
+  - Added cross-tab synchronization bus (`src/features/bus/crossTab.ts`) and device notification service worker (`public/sw-notify.js`).
+  - Implemented rule-based geo-triage auto-severity scoring and factor explanations in `src/pages/field/FieldReportPage.tsx` and `src/lib/triage.ts`.
+  - Expanded automated test suite from 18 to **67 passing tests** (`npm test`), verifying safety invariants, MILP optimality, store workflows, and digital twin mappings.
+  - Verified clean TypeScript build (`0` errors), clean automated honesty audit (41 files), clean WCAG AA contrast check, and production PWA bundle.
 
 - **2026-09-11** — Foundation, engine port, spec and contract committed (`67c0b49`, `3554d9c`, `2f1bf02`). All portal pages built and honesty audit applied (`aba3e29`). Complete build plan (`docs/BUILD-PLAN.md`) created. Issues 2–7 resolved:
   - Restricted self sign-up to field roles (`GANG_INCHARGE`, `LOCO_PILOT`) requiring invite code (`FIELD2026`).
@@ -85,6 +62,6 @@ Tested in the in-app browser. ✔ = passed, ✖ = failed (see issues), blank = n
 
 ## Next actions
 
-1. Continue the JPO loop QA: concur as the three department officers → grant / grant with change / lock as Section Controller → issue and print caution orders → field Start / Done / Clear → loco pilot acknowledgement → citizen advisories.
-2. Division pages QA, then themes (dark, sunlight) and 375 px pass on every portal.
-3. Phase 11: deploy, rehearse the 3-minute demo, record a backup.
+1. Review and commit the compliance and enhancement round files in clean atomic feature commits.
+2. Conduct browser QA on the new `WorkflowPage`, HiGHS solver stamp, and cross-tab multi-role demo flow.
+3. Deploy to production (Vercel / Netlify) to update the demo link for presentation rehearsals.

@@ -74,6 +74,34 @@ test('planHorizon respects fixedBlocks solver constraints during re-planning', (
   assert.equal(blockWithTask.start, 600);
 });
 
+test('an approved block sent back as a fixed block keeps its id and window through a different re-plan', () => {
+  const ctx = createContext('NCR_DLI_AGC', { seed: 26027 });
+  const tasks = ctx.tasks.filter((t) => !t.capital);
+  const common = { corridor: ctx.corridor, feeds: ctx.feeds, tasks, days: 7, planStart: ctx.planStart };
+  const first = planHorizon({ ...common, iterations: 600, seed: 7 });
+  const approved = first.blocks.find((b) => b.lineClosure && b.tasks.length >= 1);
+  assert.ok(approved, 'plan has a line block to approve');
+  // what the store sends for a GRANTED approval: the approval's block id + stored geometry (after a Control shift of +10 min)
+  const shift = approved.end + 10 <= 1440 ? 10 : 0;
+  const fixed = {
+    id: approved.id,
+    day: approved.day,
+    line: approved.line,
+    start: approved.start + shift,
+    end: approved.end + shift,
+    taskIds: approved.tasks.map((t) => t.id),
+    tasks: approved.tasks.map((t) => ({ id: t.id, start: t.start + shift, end: t.end + shift })),
+  };
+  const second = planHorizon({ ...common, iterations: 900, seed: 99, fixedBlocks: [fixed] });
+  const kept = second.blocks.find((b) => b.id === approved.id);
+  assert.ok(kept, 'the approval still finds its block by id');
+  assert.equal(kept.day, fixed.day);
+  assert.equal(kept.line, fixed.line);
+  assert.equal(kept.start, fixed.start);
+  assert.equal(kept.end, fixed.end);
+  assert.deepEqual(kept.tasks.map((t) => t.id).sort(), [...fixed.taskIds].sort());
+});
+
 test('joint-block suggestion targetBlock binding co-locates task into host window', () => {
   const ctx = createContext('NCR_DLI_AGC', { seed: 26027 });
   const tasks = ctx.tasks.filter((t) => !t.capital);
