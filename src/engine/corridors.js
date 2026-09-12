@@ -7,6 +7,11 @@
  * stations; OHE elementary sections are derived from switching posts.
  *
  * Coordinates are approximate station locations and are used only for the map.
+ *
+ * The twin carries three location reference systems and converts between
+ * them: civil chainage ("km/TP", TMS), signalling assets (gear ids laid out
+ * per station and line, SMMS — corridor.signals) and OHE mast numbers /
+ * elementary sections (TDMS). All resolve to route km + line + block section.
  */
 
 const corridorDefs = [
@@ -133,6 +138,206 @@ const corridorDefs = [
   }
 ];
 
+/* ------------------------------------------------------------------------ */
+/* Location reference systems of the digital twin                            */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * OHE mast numbering. A mast id "234/12" is km 234 + the 12th mast of that
+ * kilometre, masts being planted at the standard span below (mast 1 stands at
+ * the km post). Real spans vary 27–72 m with curvature; 55 m is the modelled
+ * average (the same constant the normaliser has always used).
+ */
+export const MAST_SPAN_KM = 0.055;
+/** Highest mast index inside one kilometre (1 + floor(1000 m / 55 m) = 19). */
+export const MASTS_PER_KM = Math.floor(1 / MAST_SPAN_KM) + 1;
+/**
+ * Civil chainage "km/TP": km post + telegraph-post number inside that km.
+ * Telegraph posts are modelled at 16 per km (62.5 m spacing, TP 0–15).
+ * This spacing is an assumption; divisions record the actual TP layout.
+ */
+export const TP_PER_KM = 16;
+
+const round3 = (x) => Math.round(x * 1000) / 1000;
+const round2 = (x) => Math.round(x * 100) / 100;
+const quant = (x) => Math.round(x * 1e6) / 1e6; // strip float noise before floor / ceil
+
+/** km → OHE mast id "234/12". mode: 'round' (nearest mast), 'floor' or 'ceil'. */
+export function kmToMast(km, mode = 'round') {
+  if (typeof km !== 'number' || !Number.isFinite(km) || km < 0) return null;
+  let whole = Math.floor(quant(km));
+  const f = mode === 'floor' ? Math.floor : mode === 'ceil' ? Math.ceil : Math.round;
+  let idx = f(quant((km - whole) / MAST_SPAN_KM)) + 1;
+  if (idx > MASTS_PER_KM) {
+    whole += 1;
+    idx = 1;
+  }
+  return `${whole}/${idx}`;
+}
+
+/**
+ * OHE mast id → km. Accepts "234/12", "M 234/12", "OHE mast 234/12".
+ * Returns null when the id is not a mast reference or the mast index is not
+ * possible inside one kilometre.
+ */
+export function mastToKmId(mastId) {
+  const m = String(mastId ?? '').trim().match(/(\d+)\s*\/\s*(\d+)\s*$/);
+  if (!m) return null;
+  const whole = Number(m[1]);
+  const idx = Number(m[2]);
+  if (!Number.isInteger(idx) || idx < 1 || idx > MASTS_PER_KM) return null;
+  return round3(whole + (idx - 1) * MAST_SPAN_KM);
+}
+
+/**
+ * Civil chainage text → km. Accepts "234/6" (km 234, telegraph post 6),
+ * "234/6-7" (between TP 6 and 7 → midpoint), "km 234/6", and a plain
+ * decimal "234.375" or a number (numeric fallback). Returns null if the text
+ * cannot be read or the TP number is not possible.
+ */
+export function parseChainage(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = String(v ?? '').trim().replace(/^km\s*/i, '');
+  if (!s) return null;
+  const m = s.match(/^(\d+)\s*\/\s*(\d+)(?:\s*-\s*(\d+))?$/);
+  if (m) {
+    const k = Number(m[1]);
+    const a = Number(m[2]);
+    const b = m[3] !== undefined ? Number(m[3]) : a;
+    if (a > TP_PER_KM - 1 || b > TP_PER_KM - 1) return null;
+    return round3(k + (a + b) / 2 / TP_PER_KM);
+  }
+  if (/^\d+(\.\d+)?$/.test(s)) return Number(s);
+  return null;
+}
+
+/** km → civil chainage text "234/6". mode: 'round', 'floor' or 'ceil'. */
+export function formatChainage(km, mode = 'round') {
+  if (typeof km !== 'number' || !Number.isFinite(km) || km < 0) return null;
+  let whole = Math.floor(quant(km));
+  const f = mode === 'floor' ? Math.floor : mode === 'ceil' ? Math.ceil : Math.round;
+  let tp = f(quant((km - whole) * TP_PER_KM));
+  if (tp >= TP_PER_KM) {
+    whole += 1;
+    tp = 0;
+  }
+  return `${whole}/${tp}`;
+}
+
+/** FNV-1a hash → unsigned int (deterministic layout jitter, no RNG). */
+function hashInt(text) {
+  let h = 0x811c9dc5;
+  const s = String(text);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * Railway signalling assets per station and line, laid out deterministically
+ * from the station list (no RNG). Chainage increases in the DN direction, so
+ * a DN train approaches a station from lower km.
+ *
+ * Offsets from the station centre (km, towards the approach side negative):
+ *   Distant −1.6 · approach track circuit AT −1.0 · Home −0.5 ·
+ *   home-to-points track circuit 1T −0.4 · receiving-end points −0.30/−0.26 ·
+ *   berthing track circuit 2T 0 · Starter +0.3 · dispatch-end points
+ *   +0.35/+0.39 · junction points +0.45/+0.49 (junctions only) ·
+ *   dispatch track circuit 3T +0.5 · Advanced starter +0.7 ·
+ *   BPAC axle-counter head +0.75 (block section proving towards the next station).
+ * These are typical placements (braking-distance spacing of Distant to Home,
+ * Advanced starter beyond the last points), not a surveyed signal
+ * interlocking plan. Assets that would fall outside the corridor are omitted.
+ *
+ * Level-crossing gates: floor(section length / 12 km) gates per block section,
+ * evenly spaced with a hash-derived offset of up to ±0.8 km.
+ */
+function buildSignals(def) {
+  const out = [];
+  const L = def.lengthKm;
+  const st = def.stations;
+  const add = (o) => {
+    if (o.km < 0 || o.km > L) return;
+    out.push({ ...o, km: round2(o.km) });
+  };
+  st.forEach((s, i) => {
+    for (const line of ['DN', 'UP']) {
+      const dir = line === 'DN' ? 1 : -1;
+      const at = (off) => s.km + dir * off;
+      const next = line === 'DN' ? st[i + 1] : st[i - 1];
+      const base = line === 'DN' ? 0 : 20; // signals S1–S4 on DN, S21–S24 on UP
+      const pp = line === 'DN' ? 1 : 2; // points 11A–13B on DN, 21A–23B on UP
+      const sig = (kind, off, no, words) =>
+        add({ id: `${s.code}-S-${kind}-${line}`, kind, stationCode: s.code, km: at(off), line, label: `${s.code} ${line} ${words} (S${base + no})`, number: `S${base + no}` });
+      sig('DISTANT', -1.6, 1, 'Distant');
+      sig('HOME', -0.5, 2, 'Home');
+      sig('STARTER', 0.3, 3, 'Starter');
+      sig('ADV_STARTER', 0.7, 4, 'Advanced starter');
+      const pts = [
+        [`${pp}1A`, -0.3, 'receiving end'],
+        [`${pp}1B`, -0.26, 'receiving end'],
+        [`${pp}2A`, 0.35, 'dispatch end'],
+        [`${pp}2B`, 0.39, 'dispatch end']
+      ];
+      if (s.junction) pts.push([`${pp}3A`, 0.45, 'junction'], [`${pp}3B`, 0.49, 'junction']);
+      for (const [no, off, where] of pts) {
+        add({ id: `${s.code}-P-${no}`, kind: 'POINT', stationCode: s.code, km: at(off), line, label: `${s.code} points ${no} (${line}, ${where})`, pointNo: no });
+      }
+      const tcs = [
+        ['AT', -1.0, 'AFTC', 'approach'],
+        ['1T', -0.4, s.junction ? 'AFTC' : 'DC', 'home to points'],
+        ['2T', 0, 'DC', 'main line berthing'],
+        ['3T', 0.5, s.junction ? 'AFTC' : 'DC', 'dispatch']
+      ];
+      for (const [no, off, detection, words] of tcs) {
+        add({ id: `${s.code}-TC-${no}-${line}`, kind: 'TRACK_CIRCUIT', stationCode: s.code, km: at(off), line, label: `${s.code} ${line} ${words} track circuit ${no} (${detection})`, detection });
+      }
+      if (next) {
+        add({ id: `${s.code}-TC-AXC-${line}`, kind: 'TRACK_CIRCUIT', stationCode: s.code, km: at(0.75), line, label: `${s.code} ${line} BPAC axle-counter head towards ${next.code} (SSDAC)`, detection: 'SSDAC', towards: next.code });
+      }
+    }
+  });
+  let lcNo = 0;
+  for (let i = 0; i < st.length - 1; i++) {
+    const a = st[i];
+    const b = st[i + 1];
+    const len = b.km - a.km;
+    const n = Math.floor(len / 12);
+    for (let j = 0; j < n; j++) {
+      lcNo++;
+      const h = hashInt(`${def.id}|${a.code}|${j}`);
+      const jitter = ((h % 1000) / 1000 - 0.5) * 1.6;
+      const km = a.km + (len * (j + 1)) / (n + 1) + jitter;
+      const cls = ['Special', 'A', 'B', 'C'][h % 4];
+      const interlocked = h % 3 !== 0;
+      add({ id: `LC-${lcNo}`, kind: 'LC_GATE', stationCode: a.code, km, line: 'BOTH', label: `LC ${lcNo} (${cls} class, ${interlocked ? 'interlocked' : 'non-interlocked'}) ${a.code}–${b.code}`, lcClass: cls, interlocked });
+    }
+  }
+  return out.sort((x, y) => x.km - y.km || x.id.localeCompare(y.id));
+}
+
+const signalIndexCache = new WeakMap();
+
+/** Look up a signalling asset by id on a corridor (null if unknown). */
+export function findSignal(corridor, id) {
+  if (!corridor || !corridor.signals || id === undefined || id === null) return null;
+  let idx = signalIndexCache.get(corridor.signals);
+  if (!idx) {
+    idx = new Map(corridor.signals.map((s) => [s.id, s]));
+    signalIndexCache.set(corridor.signals, idx);
+  }
+  return idx.get(String(id).trim()) || null;
+}
+
+/** Station by code (null if not on this corridor). */
+export function stationByCode(corridor, code) {
+  if (!code) return null;
+  const c = String(code).trim().toUpperCase();
+  return corridor.stations.find((s) => s.code === c) || null;
+}
+
 /** Build derived structures (block sections, OHE sections) for a corridor. */
 function enrich(def) {
   const blockSections = [];
@@ -162,7 +367,7 @@ function enrich(def) {
       spTo: `SP-${def.switchingPosts[i + 1]}`
     });
   }
-  return { ...def, lines: ['UP', 'DN'], blockSections, oheSections };
+  return { ...def, lines: ['UP', 'DN'], blockSections, oheSections, signals: buildSignals(def), mastSpanKm: MAST_SPAN_KM, tpPerKm: TP_PER_KM };
 }
 
 export const CORRIDORS = corridorDefs.map(enrich);

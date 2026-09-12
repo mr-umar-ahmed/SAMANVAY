@@ -1,0 +1,35 @@
+/* NetworkMap — corridor list under the map. Map chrome comes from CorridorMap.css (.cmap). */
+.nmap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+.nmap-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'code name badge'
+    'meta meta meta';
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.nmap-item:hover:not(:disabled) { background: var(--bg-2); border-color: var(--line-2); }
+.nmap-item:disabled { cursor: default; color: var(--ink); }
+.nmap-item.active { background: var(--bg-2); border-color: var(--ink-3); }
+.nmap-item .nmap-code { grid-area: code; }
+.nmap-item .nmap-name { grid-area: name; min-width: 0; }
+.nmap-item .nmap-badge { grid-area: badge; }
+.nmap-item .nmap-meta { grid-area: meta; }

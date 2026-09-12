@@ -107,12 +107,23 @@ const strings = {
 
 type StatusKey = 'draft' | 'proposed' | 'concurred' | 'granted' | 'locked' | 'refused';
 
+/** Bar style from the derived workflow state (select.workflowState). */
 function statusKey(b: WorkingBlock): StatusKey {
-  if (b.status === 'GRANTED') return 'granted';
-  if (b.status === 'LOCKED') return 'locked';
-  if (b.status === 'REFUSED') return 'refused';
-  if (b.concurred && b.approval?.proposedAt) return 'concurred';
-  return b.approval?.proposedAt ? 'proposed' : 'draft';
+  switch (b.state) {
+    case 'GRANTED':
+      return 'granted';
+    case 'LOCKED':
+      return 'locked';
+    case 'REFUSED':
+      return 'refused';
+    case 'CONCURRED':
+      return 'concurred';
+    case 'PROPOSED':
+    case 'SUPERSEDED':
+      return 'proposed';
+    default:
+      return 'draft';
+  }
 }
 
 const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;

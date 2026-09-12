@@ -21,7 +21,8 @@
 import { createRng } from './random.js';
 import { hhmmToMin, MIN_PER_DAY } from './time.js';
 import { TRAIN_CLASSES, WORK_TYPES, MACHINE_TYPES } from './constants.js';
-import { sectionAtKm } from './corridors.js';
+import { sectionAtKm, kmToMast, formatChainage, findSignal } from './corridors.js';
+import { buildWeatherFeed, weatherTotals, addDaysIso, toIsoDate } from './weather.js';
 
 /** "True" Weibull parameters (days) used to synthesise the failure history. */
 export const ASSET_CLASS_PARAMS = {
@@ -277,10 +278,10 @@ export function generateFreightForecast(corridor, rng, days) {
 /* Departmental registers (native schemas)                                  */
 /* ------------------------------------------------------------------------ */
 
-function mastRef(km) {
-  const whole = Math.floor(km);
-  const idx = Math.max(1, Math.round(((km - whole) * 1000) / 55));
-  return `${whole}/${idx}`;
+/** Elementary section label (ES-nn) containing a chainage. */
+function esLabel(corridor, km) {
+  const es = corridor.oheSections.find((s) => km >= s.startKm && km <= s.endKm) || corridor.oheSections[corridor.oheSections.length - 1];
+  return es.label;
 }
 
 function scaleCount(corridor, n) {
@@ -310,47 +311,54 @@ export function generateTmsRegister(corridor, rng) {
   // USFD IMR flaws (mandatory 24 h)
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, 0.2);
-    push({ workType: 'USFD_IMR_RAIL', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: 'IMR', flawType: rng.pick(['Transverse fissure (head)', 'Bolt-hole crack', 'Weld foot crack']), tgi: null, gmt: rng.int(20, 60), daysOverdue: rng.int(0, 2), tsrKmph: 30, tsrSinceDays: rng.int(0, 2), ageDays: ageFor(rng, 'RAIL', 0.9), conditionIndex: rng.range(0.85, 0.98), detectedBy: 'USFD Testing Car', requestedDaysAgo: rng.int(0, 2) });
+    push({ workType: 'USFD_IMR_RAIL', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: 'IMR', flawType: rng.pick(['Transverse fissure (head)', 'Bolt-hole crack', 'Weld foot crack']), tgi: null, gmt: rng.int(20, 60), daysOverdue: rng.int(0, 2), tsrKmph: 30, tsrSinceDays: rng.int(0, 2), ageDays: ageFor(rng, 'RAIL', 0.9), conditionIndex: rng.range(0.85, 0.98), detectedBy: 'USFD Testing Car', requestedDaysAgo: rng.int(0, 2) });
   }
   // USFD OBS
   for (let i = 0; i < scaleCount(corridor, 3); i++) {
     const k = pickSectionKm(rng, corridor, 0.3);
-    push({ workType: 'USFD_OBS_RAIL', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: 'OBS', flawType: rng.pick(['Head check', 'Shelling', 'Weld porosity']), tgi: null, gmt: rng.int(20, 55), daysOverdue: rng.int(-10, 6), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.6), conditionIndex: rng.range(0.5, 0.75), detectedBy: 'USFD trolley', requestedDaysAgo: rng.int(1, 8) });
+    push({ workType: 'USFD_OBS_RAIL', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: 'OBS', flawType: rng.pick(['Head check', 'Shelling', 'Weld porosity']), tgi: null, gmt: rng.int(20, 55), daysOverdue: rng.int(-10, 6), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.6), conditionIndex: rng.range(0.5, 0.75), detectedBy: 'USFD trolley', requestedDaysAgo: rng.int(1, 8) });
   }
   // Tamping due (TGI based)
   for (let i = 0; i < scaleCount(corridor, 6); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(2, 4));
     const tgi = rng.int(28, 62);
-    push({ workType: 'TAMPING', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: null, tgi, gmt: rng.int(25, 60), daysOverdue: rng.int(-20, 25), tsrKmph: tgi < 36 ? 75 : null, tsrSinceDays: tgi < 36 ? rng.int(3, 20) : 0, ageDays: ageFor(rng, 'BALLAST', tgi < 40 ? 0.85 : 0.55), conditionIndex: Math.min(0.95, (70 - tgi) / 50), detectedBy: 'TRC run', requestedDaysAgo: rng.int(3, 25) });
+    push({ workType: 'TAMPING', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: null, tgi, gmt: rng.int(25, 60), daysOverdue: rng.int(-20, 25), tsrKmph: tgi < 36 ? 75 : null, tsrSinceDays: tgi < 36 ? rng.int(3, 20) : 0, ageDays: ageFor(rng, 'BALLAST', tgi < 40 ? 0.85 : 0.55), conditionIndex: Math.min(0.95, (70 - tgi) / 50), detectedBy: 'TRC run', requestedDaysAgo: rng.int(3, 25) });
   }
   // Deep screening
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(1, 2));
-    push({ workType: 'DEEP_SCREENING', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: null, tgi: rng.int(30, 45), gmt: rng.int(35, 65), daysOverdue: rng.int(-30, 20), tsrKmph: rng.chance(0.5) ? 50 : null, tsrSinceDays: rng.int(5, 40), ageDays: ageFor(rng, 'BALLAST', 0.9), conditionIndex: rng.range(0.7, 0.9), detectedBy: 'Ballast profile survey', requestedDaysAgo: rng.int(10, 40) });
+    push({ workType: 'DEEP_SCREENING', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: null, tgi: rng.int(30, 45), gmt: rng.int(35, 65), daysOverdue: rng.int(-30, 20), tsrKmph: rng.chance(0.5) ? 50 : null, tsrSinceDays: rng.int(5, 40), ageDays: ageFor(rng, 'BALLAST', 0.9), conditionIndex: rng.range(0.7, 0.9), detectedBy: 'Ballast profile survey', requestedDaysAgo: rng.int(10, 40) });
   }
   // Turnout renewal at junctions
   const junctions = corridor.stations.filter((s) => s.junction);
+  const usedPoints = new Set();
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const st = rng.pick(junctions);
-    push({ workType: 'TURNOUT_RENEWAL', line: rng.pick(lines), fromKm: st.km, toKm: st.km + 0.1, station: st.code, turnoutNo: `${rng.int(101, 130)}${rng.pick(['A', 'B'])}`, usfdClass: null, tgi: null, gmt: rng.int(30, 60), daysOverdue: rng.int(-10, 15), tsrKmph: rng.chance(0.6) ? 45 : null, tsrSinceDays: rng.int(2, 30), ageDays: ageFor(rng, 'TURNOUT', 0.8), conditionIndex: rng.range(0.6, 0.9), detectedBy: 'Switch inspection', requestedDaysAgo: rng.int(5, 30) });
+    // draw order kept identical to the v4.0 generator (line, turnout number, …)
+    const line = rng.pick(lines);
+    const tn = rng.int(101, 130);
+    const ab = rng.pick(['A', 'B']);
+    // the turnout is one of the station's real points in the twin (points 11A…23B)
+    const pt = pickGear(gearsOf(corridor, (g) => g.kind === 'POINT' && g.stationCode === st.code && g.line === line), tn + (ab === 'B' ? 1 : 0), usedPoints);
+    push({ workType: 'TURNOUT_RENEWAL', line, chainageFrom: formatChainage(pt.km, 'floor'), chainageTo: formatChainage(pt.km + 0.1, 'ceil'), station: st.code, turnoutNo: pt.pointNo, usfdClass: null, tgi: null, gmt: rng.int(30, 60), daysOverdue: rng.int(-10, 15), tsrKmph: rng.chance(0.6) ? 45 : null, tsrSinceDays: rng.int(2, 30), ageDays: ageFor(rng, 'TURNOUT', 0.8), conditionIndex: rng.range(0.6, 0.9), detectedBy: 'Switch inspection', requestedDaysAgo: rng.int(5, 30) });
   }
   // Rail grinding, de-stressing
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(3, 6));
-    push({ workType: 'RAIL_GRINDING', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: null, tgi: null, gmt: rng.int(30, 60), daysOverdue: rng.int(-40, 10), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.4), conditionIndex: rng.range(0.3, 0.5), detectedBy: 'Rail profile survey', requestedDaysAgo: rng.int(10, 40) });
+    push({ workType: 'RAIL_GRINDING', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: null, tgi: null, gmt: rng.int(30, 60), daysOverdue: rng.int(-40, 10), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.4), conditionIndex: rng.range(0.3, 0.5), detectedBy: 'Rail profile survey', requestedDaysAgo: rng.int(10, 40) });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(1.5, 3));
-    push({ workType: 'DESTRESSING', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: null, tgi: null, gmt: rng.int(30, 60), daysOverdue: rng.int(-15, 12), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.55), conditionIndex: rng.range(0.45, 0.7), detectedBy: 'Creep / SEJ gap measurement', requestedDaysAgo: rng.int(5, 30) });
+    push({ workType: 'DESTRESSING', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: null, tgi: null, gmt: rng.int(30, 60), daysOverdue: rng.int(-15, 12), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.55), conditionIndex: rng.range(0.45, 0.7), detectedBy: 'Creep / SEJ gap measurement', requestedDaysAgo: rng.int(5, 30) });
   }
   // Capital works (26-week RBP)
   for (let i = 0; i < scaleCount(corridor, 3); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(2, 4));
-    push({ workType: 'CTR', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, usfdClass: null, tgi: rng.int(30, 45), gmt: rng.int(40, 70), daysOverdue: rng.int(-120, -20), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.8), conditionIndex: rng.range(0.6, 0.8), detectedBy: 'Annual renewal programme', requestedDaysAgo: rng.int(30, 90), capital: true, noticeWeeksGiven: rng.int(4, 14), targetWeek: rng.int(2, 24), workingDaysNeeded: rng.int(4, 10) });
+    push({ workType: 'CTR', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), usfdClass: null, tgi: rng.int(30, 45), gmt: rng.int(40, 70), daysOverdue: rng.int(-120, -20), tsrKmph: null, ageDays: ageFor(rng, 'RAIL', 0.8), conditionIndex: rng.range(0.6, 0.8), detectedBy: 'Annual renewal programme', requestedDaysAgo: rng.int(30, 90), capital: true, noticeWeeksGiven: rng.int(4, 14), targetWeek: rng.int(2, 24), workingDaysNeeded: rng.int(4, 10) });
   }
   {
     const k = pickSectionKm(rng, corridor, 0.3);
-    push({ workType: 'BRIDGE_GIRDER', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, bridgeNo: `Br. ${rng.int(100, 900)}`, usfdClass: null, tgi: null, gmt: rng.int(40, 70), daysOverdue: rng.int(-100, -30), tsrKmph: 20, tsrSinceDays: rng.int(30, 120), ageDays: ageFor(rng, 'BRIDGE', 0.9), conditionIndex: rng.range(0.75, 0.9), detectedBy: 'Bridge inspection (ORN 3)', requestedDaysAgo: rng.int(40, 120), capital: true, noticeWeeksGiven: rng.int(8, 16), targetWeek: rng.int(3, 22), workingDaysNeeded: rng.int(3, 6) });
+    push({ workType: 'BRIDGE_GIRDER', line: rng.pick(lines), chainageFrom: formatChainage(k.startKm, 'floor'), chainageTo: formatChainage(k.endKm, 'ceil'), bridgeNo: `Br. ${rng.int(100, 900)}`, usfdClass: null, tgi: null, gmt: rng.int(40, 70), daysOverdue: rng.int(-100, -30), tsrKmph: 20, tsrSinceDays: rng.int(30, 120), ageDays: ageFor(rng, 'BRIDGE', 0.9), conditionIndex: rng.range(0.75, 0.9), detectedBy: 'Bridge inspection (ORN 3)', requestedDaysAgo: rng.int(40, 120), capital: true, noticeWeeksGiven: rng.int(8, 16), targetWeek: rng.int(3, 22), workingDaysNeeded: rng.int(3, 6) });
   }
   return recs;
 }
@@ -362,33 +370,98 @@ export function generateSmmsRegister(corridor, rng) {
   const stations = corridor.stations;
   const junctions = stations.filter((s) => s.junction);
   const lines = ['UP', 'DN'];
+  const used = new Set();
+  // SMMS records carry the station yard and a gear id from the corridor's
+  // signalling table (corridor.signals) — no chainage. The normaliser resolves
+  // gear → km, line and block section. RNG draw order is kept identical to the
+  // v4.0 generator so the rest of the seeded feed does not move.
 
   for (let i = 0; i < scaleCount(corridor, 4); i++) {
     const st = rng.pick(junctions);
     const failures = rng.int(1, 5);
-    push({ workType: 'POINT_MACHINE_OVERHAUL', station: st.code, line: rng.pick(lines), km: st.km, gearId: `PM-${st.code}-${rng.int(101, 140)}${rng.pick(['A', 'B'])}`, gearType: 'IRS electric point machine', failures90d: failures, mtbfHours: rng.int(400, 2400), backlashMm: rng.range(1.6, 3.2), insulationMohm: rng.range(2, 40), daysOverdue: rng.int(-5, 12), ageDays: ageFor(rng, 'POINT_MACHINE', failures > 2 ? 0.85 : 0.6), conditionIndex: Math.min(0.95, 0.3 + failures * 0.15), requestedDaysAgo: rng.int(1, 12) });
+    const line = rng.pick(lines);
+    const n = rng.int(101, 140);
+    const ab = rng.pick(['A', 'B']);
+    const rec = { mtbfHours: rng.int(400, 2400), backlashMm: rng.range(1.6, 3.2), insulationMohm: rng.range(2, 40), daysOverdue: rng.int(-5, 12), ageDays: ageFor(rng, 'POINT_MACHINE', failures > 2 ? 0.85 : 0.6), conditionIndex: Math.min(0.95, 0.3 + failures * 0.15), requestedDaysAgo: rng.int(1, 12) };
+    const gear = pickGear(gearsOf(corridor, (g) => g.kind === 'POINT' && g.stationCode === st.code && g.line === line), n + (ab === 'B' ? 1 : 0), used);
+    push({ workType: 'POINT_MACHINE_OVERHAUL', station: gear.stationCode, gearId: gear.id, gearType: 'IRS electric point machine', failures90d: failures, ...rec });
   }
   for (let i = 0; i < scaleCount(corridor, 3); i++) {
     const k = pickSectionKm(rng, corridor, 0.5);
-    push({ workType: 'TRACK_CIRCUIT_REPAIR', station: k.section.from, line: rng.pick(lines), km: k.startKm, gearId: `TC-${k.section.from}-${rng.int(1, 30)}T`, gearType: rng.pick(['DC track circuit', 'AFTC']), failures90d: rng.int(1, 6), mtbfHours: rng.int(300, 1800), insulationMohm: rng.range(0.5, 20), daysOverdue: rng.int(-4, 9), ageDays: ageFor(rng, 'TRACK_CIRCUIT', 0.7), conditionIndex: rng.range(0.5, 0.9), requestedDaysAgo: rng.int(1, 9) });
+    const line = rng.pick(lines);
+    rng.int(1, 30); // legacy draw (old free-text gear number)
+    rng.pick(['DC track circuit', 'AFTC']); // legacy draw (gear type now comes from the twin)
+    const rec = { failures90d: rng.int(1, 6), mtbfHours: rng.int(300, 1800), insulationMohm: rng.range(0.5, 20), daysOverdue: rng.int(-4, 9), ageDays: ageFor(rng, 'TRACK_CIRCUIT', 0.7), conditionIndex: rng.range(0.5, 0.9), requestedDaysAgo: rng.int(1, 9) };
+    const sec = k.section;
+    const inSec = gearsOf(corridor, (g) => g.kind === 'TRACK_CIRCUIT' && g.detection !== 'SSDAC' && g.line === line && g.km >= sec.startKm && g.km <= sec.endKm);
+    const gear = nearestGear(inSec.length ? inSec : gearsOf(corridor, (g) => g.kind === 'TRACK_CIRCUIT' && g.detection !== 'SSDAC' && g.line === line), k.startKm, used);
+    push({ workType: 'TRACK_CIRCUIT_REPAIR', station: gear.stationCode, gearId: gear.id, gearType: gear.detection === 'AFTC' ? 'AFTC' : 'DC track circuit', ...rec });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, 0.3);
-    push({ workType: 'AXLE_COUNTER_RESET', station: k.section.from, line: rng.pick(lines), km: k.startKm, gearId: `AC-${k.section.label}-${rng.int(1, 9)}`, gearType: 'SSDAC dual head', failures90d: rng.int(1, 4), resetCount7d: rng.int(1, 6), mtbfHours: rng.int(500, 2500), daysOverdue: rng.int(-6, 8), ageDays: ageFor(rng, 'AXLE_COUNTER', 0.65), conditionIndex: rng.range(0.45, 0.85), requestedDaysAgo: rng.int(1, 10) });
+    const line = rng.pick(lines);
+    rng.int(1, 9); // legacy draw
+    const rec = { failures90d: rng.int(1, 4), resetCount7d: rng.int(1, 6), mtbfHours: rng.int(500, 2500), daysOverdue: rng.int(-6, 8), ageDays: ageFor(rng, 'AXLE_COUNTER', 0.65), conditionIndex: rng.range(0.45, 0.85), requestedDaysAgo: rng.int(1, 10) };
+    // BPAC axle-counter head at the sending station's advanced starter
+    const sec = k.section;
+    const ids = line === 'DN' ? [`${sec.from}-TC-AXC-DN`, `${sec.to}-TC-AXC-UP`] : [`${sec.to}-TC-AXC-UP`, `${sec.from}-TC-AXC-DN`];
+    const cands = ids.map((id) => findSignal(corridor, id)).filter(Boolean);
+    const gear = cands.find((g) => !used.has(g.id)) || cands[0];
+    used.add(gear.id);
+    push({ workType: 'AXLE_COUNTER_RESET', station: gear.stationCode, gearId: gear.id, gearType: 'SSDAC dual head', ...rec });
   }
   for (let i = 0; i < scaleCount(corridor, 1); i++) {
     const st = rng.pick(junctions);
-    push({ workType: 'EI_CARD_REPLACEMENT', station: st.code, line: rng.pick(lines), km: st.km, gearId: `EI-${st.code}`, gearType: '2oo3 electronic interlocking', failures90d: rng.int(1, 3), mtbfHours: rng.int(800, 3000), daysOverdue: rng.int(-2, 4), ageDays: ageFor(rng, 'EI', 0.7), conditionIndex: rng.range(0.6, 0.9), requestedDaysAgo: rng.int(0, 4) });
+    // station-yard asset: the electronic interlocking of the station (no gear table entry)
+    push({ workType: 'EI_CARD_REPLACEMENT', station: st.code, line: rng.pick(lines), gearId: `EI-${st.code}`, gearType: '2oo3 electronic interlocking', failures90d: rng.int(1, 3), mtbfHours: rng.int(800, 3000), daysOverdue: rng.int(-2, 4), ageDays: ageFor(rng, 'EI', 0.7), conditionIndex: rng.range(0.6, 0.9), requestedDaysAgo: rng.int(0, 4) });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(1, 2.5));
-    push({ workType: 'SIGNAL_CABLE', station: k.section.from, line: rng.pick(lines), km: k.startKm, toKm: k.endKm, gearId: `CBL-${k.section.label}`, gearType: rng.pick(['Signalling cable 12 core', 'OFC 24F']), failures90d: rng.int(0, 2), mtbfHours: rng.int(2000, 8000), insulationMohm: rng.range(1, 50), daysOverdue: rng.int(-40, 10), ageDays: ageFor(rng, 'CABLE', 0.5), conditionIndex: rng.range(0.3, 0.6), requestedDaysAgo: rng.int(5, 40) });
+    const line = rng.pick(lines);
+    const gearType = rng.pick(['Signalling cable 12 core', 'OFC 24F']);
+    const rec = { failures90d: rng.int(0, 2), mtbfHours: rng.int(2000, 8000), insulationMohm: rng.range(1, 50), daysOverdue: rng.int(-40, 10), ageDays: ageFor(rng, 'CABLE', 0.5), conditionIndex: rng.range(0.3, 0.6), requestedDaysAgo: rng.int(5, 40) };
+    // cable route: from the location box at a signal of this line, a length towards the far station of the section
+    const sec = k.section;
+    const gear = nearestGear(gearsOf(corridor, (g) => g.line === line && g.kind !== 'POINT' && g.km >= sec.startKm && g.km <= sec.endKm), k.startKm, used);
+    const towards = gear.km - sec.startKm < sec.endKm - gear.km ? sec.to : sec.from;
+    push({ workType: 'SIGNAL_CABLE', station: gear.stationCode, gearId: gear.id, towards, cableLengthM: Math.round((k.endKm - k.startKm) * 1000), gearType, ...rec });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, 0.1);
-    push({ workType: 'LC_GATE_INTERLOCK', station: k.section.from, line: 'BOTH', km: k.startKm, gearId: `LC-${rng.int(1, 120)}${rng.pick(['A', 'B', 'C'])}`, gearType: 'Interlocked LC gate', failures90d: rng.int(0, 3), mtbfHours: rng.int(600, 3000), daysOverdue: rng.int(-10, 10), ageDays: ageFor(rng, 'LC_GATE', 0.6), conditionIndex: rng.range(0.4, 0.8), requestedDaysAgo: rng.int(2, 14) });
+    rng.int(1, 120); // legacy draws (old free-text LC number)
+    rng.pick(['A', 'B', 'C']);
+    const rec = { failures90d: rng.int(0, 3), mtbfHours: rng.int(600, 3000), daysOverdue: rng.int(-10, 10), ageDays: ageFor(rng, 'LC_GATE', 0.6), conditionIndex: rng.range(0.4, 0.8), requestedDaysAgo: rng.int(2, 14) };
+    const lcs = gearsOf(corridor, (g) => g.kind === 'LC_GATE' && g.interlocked);
+    const gear = nearestGear(lcs.length ? lcs : gearsOf(corridor, (g) => g.kind === 'LC_GATE'), k.startKm, used);
+    push({ workType: 'LC_GATE_INTERLOCK', station: gear.stationCode, gearId: gear.id, gearType: 'Interlocked LC gate', ...rec });
   }
   return recs;
+}
+
+/* Gear table helpers (corridor.signals) */
+function gearsOf(corridor, pred) {
+  return (corridor.signals || []).filter(pred);
+}
+
+/** k-th gear of a list, skipping ones already used by another record. */
+function pickGear(list, k, used) {
+  const start = ((k % list.length) + list.length) % list.length;
+  for (let j = 0; j < list.length; j++) {
+    const g = list[(start + j) % list.length];
+    if (!used.has(g.id)) {
+      used.add(g.id);
+      return g;
+    }
+  }
+  return list[start];
+}
+
+/** Gear nearest to a chainage, skipping ones already used. */
+function nearestGear(list, km, used) {
+  const sorted = list.slice().sort((a, b) => Math.abs(a.km - km) - Math.abs(b.km - km) || a.id.localeCompare(b.id));
+  const g = sorted.find((x) => !used.has(x.id)) || sorted[0];
+  used.add(g.id);
+  return g;
 }
 
 export function generateTdmsRegister(corridor, rng) {
@@ -400,32 +473,32 @@ export function generateTdmsRegister(corridor, rng) {
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(1, 2));
     const thick = rng.range(7.9, 8.6);
-    push({ workType: 'CONTACT_WIRE_RENEWAL', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, mastFrom: mastRef(k.startKm), mastTo: mastRef(k.endKm), wireThicknessMm: thick, staggerDevMm: rng.int(20, 80), heightDevMm: rng.int(10, 40), sparkingEvents30d: rng.int(3, 15), daysOverdue: rng.int(-3, 9), tsrKmph: thick < 8.25 ? 60 : null, tsrSinceDays: rng.int(1, 12), ageDays: ageFor(rng, 'CONTACT_WIRE', 0.95), conditionIndex: Math.min(0.98, (9.2 - thick) / 1.2), requestedDaysAgo: rng.int(1, 10) });
+    push({ workType: 'CONTACT_WIRE_RENEWAL', line: rng.pick(lines), mastFrom: kmToMast(k.startKm, 'floor'), mastTo: kmToMast(k.endKm, 'ceil'), elementarySection: esLabel(corridor, k.startKm), wireThicknessMm: thick, staggerDevMm: rng.int(20, 80), heightDevMm: rng.int(10, 40), sparkingEvents30d: rng.int(3, 15), daysOverdue: rng.int(-3, 9), tsrKmph: thick < 8.25 ? 60 : null, tsrSinceDays: rng.int(1, 12), ageDays: ageFor(rng, 'CONTACT_WIRE', 0.95), conditionIndex: Math.min(0.98, (9.2 - thick) / 1.2), requestedDaysAgo: rng.int(1, 10) });
   }
   for (let i = 0; i < scaleCount(corridor, 3); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(0.5, 1.2));
-    push({ workType: 'DROPPER_STAGGER', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, mastFrom: mastRef(k.startKm), mastTo: mastRef(k.endKm), wireThicknessMm: rng.range(9, 10.5), staggerDevMm: rng.int(40, 110), heightDevMm: rng.int(20, 60), sparkingEvents30d: rng.int(0, 6), daysOverdue: rng.int(-15, 14), tsrKmph: null, ageDays: ageFor(rng, 'CONTACT_WIRE', 0.5), conditionIndex: rng.range(0.35, 0.7), requestedDaysAgo: rng.int(3, 20) });
+    push({ workType: 'DROPPER_STAGGER', line: rng.pick(lines), mastFrom: kmToMast(k.startKm, 'floor'), mastTo: kmToMast(k.endKm, 'ceil'), elementarySection: esLabel(corridor, k.startKm), wireThicknessMm: rng.range(9, 10.5), staggerDevMm: rng.int(40, 110), heightDevMm: rng.int(20, 60), sparkingEvents30d: rng.int(0, 6), daysOverdue: rng.int(-15, 14), tsrKmph: null, ageDays: ageFor(rng, 'CONTACT_WIRE', 0.5), conditionIndex: rng.range(0.35, 0.7), requestedDaysAgo: rng.int(3, 20) });
   }
   for (let i = 0; i < scaleCount(corridor, 4); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(0.3, 1));
-    push({ workType: 'INSULATOR_REPLACEMENT', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, mastFrom: mastRef(k.startKm), mastTo: mastRef(k.endKm), insulatorType: rng.pick(['Porcelain 9-tonne', 'Composite silicone']), flashoverCount90d: rng.int(0, 4), contaminationClass: rng.pick(['Light', 'Medium', 'Heavy (industrial)']), daysOverdue: rng.int(-20, 12), tsrKmph: null, ageDays: ageFor(rng, 'INSULATOR', 0.65), conditionIndex: rng.range(0.4, 0.85), requestedDaysAgo: rng.int(3, 25) });
+    push({ workType: 'INSULATOR_REPLACEMENT', line: rng.pick(lines), mastFrom: kmToMast(k.startKm, 'floor'), mastTo: kmToMast(k.endKm, 'ceil'), elementarySection: esLabel(corridor, k.startKm), insulatorType: rng.pick(['Porcelain 9-tonne', 'Composite silicone']), flashoverCount90d: rng.int(0, 4), contaminationClass: rng.pick(['Light', 'Medium', 'Heavy (industrial)']), daysOverdue: rng.int(-20, 12), tsrKmph: null, ageDays: ageFor(rng, 'INSULATOR', 0.65), conditionIndex: rng.range(0.4, 0.85), requestedDaysAgo: rng.int(3, 25) });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(0.3, 0.8));
-    push({ workType: 'CANTILEVER_REPLACEMENT', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, mastFrom: mastRef(k.startKm), mastTo: mastRef(k.endKm), corrosionGrade: rng.pick(['C3', 'C4', 'C5']), daysOverdue: rng.int(-30, 10), tsrKmph: null, ageDays: ageFor(rng, 'CANTILEVER', 0.7), conditionIndex: rng.range(0.4, 0.8), requestedDaysAgo: rng.int(5, 35) });
+    push({ workType: 'CANTILEVER_REPLACEMENT', line: rng.pick(lines), mastFrom: kmToMast(k.startKm, 'floor'), mastTo: kmToMast(k.endKm, 'ceil'), elementarySection: esLabel(corridor, k.startKm), corrosionGrade: rng.pick(['C3', 'C4', 'C5']), daysOverdue: rng.int(-30, 10), tsrKmph: null, ageDays: ageFor(rng, 'CANTILEVER', 0.7), conditionIndex: rng.range(0.4, 0.8), requestedDaysAgo: rng.int(5, 35) });
   }
   for (let i = 0; i < scaleCount(corridor, 1); i++) {
     const tss = rng.pick(corridor.tss);
     const km = Math.max(0.5, tss.km - rng.range(4, 12));
-    push({ workType: 'NEUTRAL_SECTION', line: rng.pick(lines), fromKm: Math.round(km * 10) / 10, toKm: Math.round((km + 0.4) * 10) / 10, mastFrom: mastRef(km), mastTo: mastRef(km + 0.4), nsType: 'Short neutral section (PTFE)', flashoverCount90d: rng.int(1, 5), daysOverdue: rng.int(-5, 10), tsrKmph: rng.chance(0.5) ? 60 : null, tsrSinceDays: rng.int(1, 15), ageDays: ageFor(rng, 'NEUTRAL_SECTION', 0.8), conditionIndex: rng.range(0.6, 0.9), requestedDaysAgo: rng.int(2, 12) });
+    push({ workType: 'NEUTRAL_SECTION', line: rng.pick(lines), mastFrom: kmToMast(km, 'floor'), mastTo: kmToMast(km + 0.4, 'ceil'), elementarySection: esLabel(corridor, km), nsType: 'Short neutral section (PTFE)', flashoverCount90d: rng.int(1, 5), daysOverdue: rng.int(-5, 10), tsrKmph: rng.chance(0.5) ? 60 : null, tsrSinceDays: rng.int(1, 15), ageDays: ageFor(rng, 'NEUTRAL_SECTION', 0.8), conditionIndex: rng.range(0.6, 0.9), requestedDaysAgo: rng.int(2, 12) });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const tss = rng.pick(corridor.tss);
-    push({ workType: 'TSS_MAINTENANCE', line: 'BOTH', fromKm: tss.km, toKm: tss.km, tssCode: tss.code, transformerMva: rng.pick([21.6, 30]), oilBdvKv: rng.int(30, 60), oilTempC: rng.int(45, 72), daysOverdue: rng.int(-40, 15), tsrKmph: null, ageDays: ageFor(rng, 'TSS', 0.6), conditionIndex: rng.range(0.3, 0.7), requestedDaysAgo: rng.int(5, 40) });
+    push({ workType: 'TSS_MAINTENANCE', line: 'BOTH', tssCode: tss.code, transformerMva: rng.pick([21.6, 30]), oilBdvKv: rng.int(30, 60), oilTempC: rng.int(45, 72), daysOverdue: rng.int(-40, 15), tsrKmph: null, ageDays: ageFor(rng, 'TSS', 0.6), conditionIndex: rng.range(0.3, 0.7), requestedDaysAgo: rng.int(5, 40) });
   }
   for (let i = 0; i < scaleCount(corridor, 2); i++) {
     const k = pickSectionKm(rng, corridor, rng.range(3, 6));
-    push({ workType: 'OHE_REWIRING', line: rng.pick(lines), fromKm: k.startKm, toKm: k.endKm, mastFrom: mastRef(k.startKm), mastTo: mastRef(k.endKm), wireThicknessMm: rng.range(8.6, 9.2), staggerDevMm: rng.int(20, 60), heightDevMm: rng.int(10, 40), sparkingEvents30d: rng.int(0, 4), daysOverdue: rng.int(-120, -20), tsrKmph: null, ageDays: ageFor(rng, 'CONTACT_WIRE', 0.85), conditionIndex: rng.range(0.6, 0.8), requestedDaysAgo: rng.int(30, 100), capital: true, noticeWeeksGiven: rng.int(4, 14), targetWeek: rng.int(2, 24), workingDaysNeeded: rng.int(5, 12) });
+    push({ workType: 'OHE_REWIRING', line: rng.pick(lines), mastFrom: kmToMast(k.startKm, 'floor'), mastTo: kmToMast(k.endKm, 'ceil'), elementarySection: esLabel(corridor, k.startKm), wireThicknessMm: rng.range(8.6, 9.2), staggerDevMm: rng.int(20, 60), heightDevMm: rng.int(10, 40), sparkingEvents30d: rng.int(0, 4), daysOverdue: rng.int(-120, -20), tsrKmph: null, ageDays: ageFor(rng, 'CONTACT_WIRE', 0.85), conditionIndex: rng.range(0.6, 0.8), requestedDaysAgo: rng.int(30, 100), capital: true, noticeWeeksGiven: rng.int(4, 14), targetWeek: rng.int(2, 24), workingDaysNeeded: rng.int(5, 12) });
   }
   return recs;
 }
@@ -535,10 +608,191 @@ export function generateExecutionLog(rng, perType = 8) {
 }
 
 /* ------------------------------------------------------------------------ */
+/* Inspection schedule fields (separate RNG stream — the registers above do  */
+/* not move)                                                                 */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Inspection periodicity per work type, days. Approximate schedules in the
+ * spirit of the IRPWM / USFD manual / S&T and ACTM maintenance schedules
+ * (assumption for the seeded feed, not a rule book extract).
+ */
+export const INSPECTION_CYCLE_DAYS = {
+  USFD_IMR_RAIL: 60, USFD_OBS_RAIL: 60, TAMPING: 120, DEEP_SCREENING: 180, TURNOUT_RENEWAL: 90, RAIL_GRINDING: 180, DESTRESSING: 180, CTR: 365, BRIDGE_GIRDER: 365,
+  POINT_MACHINE_OVERHAUL: 30, TRACK_CIRCUIT_REPAIR: 30, AXLE_COUNTER_RESET: 90, EI_CARD_REPLACEMENT: 90, SIGNAL_CABLE: 180, LC_GATE_INTERLOCK: 30,
+  CONTACT_WIRE_RENEWAL: 180, DROPPER_STAGGER: 180, INSULATOR_REPLACEMENT: 90, CANTILEVER_REPLACEMENT: 365, NEUTRAL_SECTION: 90, TSS_MAINTENANCE: 30, OHE_REWIRING: 365
+};
+
+/**
+ * Adds lastInspectionDaysAgo / inspectionCycleDays to every register record
+ * (about 1 in 12 seeded records is past its cycle) and a measured gauge
+ * (gaugeMm, BG nominal 1676 mm) to TRC-derived tamping records.
+ */
+export function annotateInspections(registers, rng) {
+  for (const key of ['tms', 'smms', 'tdms']) {
+    for (const rec of registers[key] || []) {
+      const cycle = INSPECTION_CYCLE_DAYS[rec.workType] || 90;
+      const late = rng.chance(0.08);
+      const frac = late ? rng.range(1.1, 2.4) : rng.range(0.05, 0.95);
+      rec.inspectionCycleDays = cycle;
+      rec.lastInspectionDaysAgo = Math.max(1, Math.round(cycle * frac));
+      if (rec.workType === 'TAMPING' && rec.gaugeMm === undefined) rec.gaugeMm = 1676 + rng.int(-4, 9);
+    }
+  }
+  return registers;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Data-quality test records                                                 */
+/* ------------------------------------------------------------------------ */
+
+const DQ_NOTE = 'seeded data-quality test record';
+
+/**
+ * A small, clearly labelled set of records per corridor that the normaliser
+ * must catch (dq: true, note "seeded data-quality test record …", dqCode =
+ * the issue code the record is built to trigger). Derived from the corridor
+ * and the seeded registers only (no RNG).
+ */
+export function generateDqRecords(corridor, registers) {
+  const code = corridor.code;
+  const L = corridor.lengthKm;
+  const junctions = corridor.stations.filter((s) => s.junction);
+  const mid = junctions.reduce((best, s) => (Math.abs(s.km - L / 2) < Math.abs(best.km - L / 2) ? s : best), junctions[0]);
+  const sec = corridor.blockSections[Math.floor(corridor.blockSections.length / 2)];
+  const secB = corridor.blockSections[Math.max(0, Math.floor(corridor.blockSections.length / 2) - 1)];
+  const lastEs = corridor.oheSections[corridor.oheSections.length - 1];
+  const tms = [];
+  const smms = [];
+  const tdms = [];
+
+  // 1. SMMS gear id that is not in the station's signalling table
+  smms.push({ smmsId: `SMMS/${code}/DQ-1`, workType: 'POINT_MACHINE_OVERHAUL', station: mid.code, gearId: `${mid.code}-P-97C`, gearType: 'IRS electric point machine', failures90d: 2, mtbfHours: 900, backlashMm: 2.4, insulationMohm: 12, daysOverdue: 3, ageDays: 700, conditionIndex: 0.6, requestedDaysAgo: 2, dq: true, dqCode: 'UNKNOWN_GEAR', note: `${DQ_NOTE}: gear id ${mid.code}-P-97C is not in the ${mid.code} signalling table` });
+
+  // 2. TDMS mast beyond the end of the corridor
+  const far = L + 7;
+  tdms.push({ tdmsId: `TDMS/${code}/DQ-1`, workType: 'INSULATOR_REPLACEMENT', line: 'DN', mastFrom: `${far}/4`, mastTo: `${far}/9`, elementarySection: lastEs.label, insulatorType: 'Composite silicone', flashoverCount90d: 1, contaminationClass: 'Medium', daysOverdue: 2, tsrKmph: null, ageDays: 800, conditionIndex: 0.55, requestedDaysAgo: 4, dq: true, dqCode: 'MAST_OUT_OF_RANGE', note: `${DQ_NOTE}: mast ${far}/4 lies beyond the corridor end (km ${L})` });
+
+  // 3. TMS record with a line code the double-line twin does not have
+  const a3 = Math.round((sec.startKm + Math.min(3, sec.lengthKm / 3)) * 10) / 10;
+  tms.push({ tmsId: `TMS/${code}/DQ-1`, workType: 'TAMPING', line: 'M3', chainageFrom: formatChainage(a3, 'floor'), chainageTo: formatChainage(a3 + 1.5, 'ceil'), usfdClass: null, tgi: 44, gmt: 40, gaugeMm: 1678, daysOverdue: 4, tsrKmph: null, ageDays: 400, conditionIndex: 0.52, detectedBy: 'TRC run', requestedDaysAgo: 6, dq: true, dqCode: 'BAD_LINE', note: `${DQ_NOTE}: line code "M3" (a third line) is not UP, DN or BOTH on this double-line corridor` });
+
+  // 4. TDMS record with a work type the planner has no rule for
+  const a4 = Math.round((secB.startKm + Math.min(2, secB.lengthKm / 3)) * 10) / 10;
+  tdms.push({ tdmsId: `TDMS/${code}/DQ-2`, workType: 'MAST_REALIGNMENT', line: 'UP', mastFrom: kmToMast(a4, 'floor'), mastTo: kmToMast(a4 + 0.3, 'ceil'), elementarySection: esLabel(corridor, a4), daysOverdue: 0, tsrKmph: null, ageDays: 3000, conditionIndex: 0.5, requestedDaysAgo: 3, dq: true, dqCode: 'UNKNOWN_WORKTYPE', note: `${DQ_NOTE}: work type MAST_REALIGNMENT is not in the work-type catalogue` });
+
+  // 5. The same point machine reported in TMS (joint inspection) and in SMMS
+  const pm = (registers.smms || []).find((r) => r.workType === 'POINT_MACHINE_OVERHAUL' && !r.dq);
+  const gear = pm ? findSignal(corridor, pm.gearId) : null;
+  if (pm && gear) {
+    tms.push({ tmsId: `TMS/${code}/DQ-2`, workType: 'POINT_MACHINE_OVERHAUL', line: gear.line, station: gear.stationCode, turnoutNo: gear.pointNo, chainageFrom: formatChainage(gear.km), chainageTo: formatChainage(gear.km), usfdClass: null, tgi: null, gmt: 40, daysOverdue: pm.daysOverdue, tsrKmph: null, ageDays: pm.ageDays, conditionIndex: pm.conditionIndex, detectedBy: 'Joint P-Way / S&T point inspection', requestedDaysAgo: 1, dq: true, dqCode: 'DUPLICATE', note: `${DQ_NOTE}: points ${gear.pointNo} at ${gear.stationCode} are also on the SMMS register` });
+  }
+
+  // 6. A physically impossible measurement (gauge keyed as 1740 mm)
+  const a6 = Math.round((sec.startKm + Math.min(5, sec.lengthKm / 2)) * 10) / 10;
+  tms.push({ tmsId: `TMS/${code}/DQ-3`, workType: 'TAMPING', line: 'DN', chainageFrom: formatChainage(a6, 'floor'), chainageTo: formatChainage(a6 + 1.2, 'ceil'), usfdClass: null, tgi: 41, gmt: 38, gaugeMm: 1740, daysOverdue: 2, tsrKmph: null, ageDays: 380, conditionIndex: 0.55, detectedBy: 'TRC run', requestedDaysAgo: 5, dq: true, dqCode: 'VALUE_OUT_OF_RANGE', note: `${DQ_NOTE}: gauge keyed as 1740 mm (broad gauge nominal 1676 mm)` });
+
+  const dqInspect = (r) => ({ ...r, inspectionCycleDays: INSPECTION_CYCLE_DAYS[r.workType] || 90, lastInspectionDaysAgo: 10 });
+  return { tms: tms.map(dqInspect), smms: smms.map(dqInspect), tdms: tdms.map(dqInspect) };
+}
+
+/* ------------------------------------------------------------------------ */
+/* Recent failure log (for failure-spike detection)                         */
+/* ------------------------------------------------------------------------ */
+
+const CLASS_SYSTEM = { RAIL: 'TMS', BALLAST: 'TMS', TURNOUT: 'TMS', BRIDGE: 'TMS', POINT_MACHINE: 'SMMS', TRACK_CIRCUIT: 'SMMS', AXLE_COUNTER: 'SMMS', EI: 'SMMS', CABLE: 'SMMS', LC_GATE: 'SMMS', CONTACT_WIRE: 'TDMS', INSULATOR: 'TDMS', CANTILEVER: 'TDMS', NEUTRAL_SECTION: 'TDMS', TSS: 'TDMS' };
+
+/**
+ * Seasonal hazard multipliers used to seed the recent failure log from the
+ * past window's weather (assumed couplings, stated with each factor):
+ * rain → track-circuit / axle-counter / point / LC-gate failures (ballast
+ * resistance, water ingress), fog nights → insulator flashovers (pollution
+ * + moisture), hot days → rail and contact-wire defects.
+ */
+export function seasonalHazardMultipliers(totals) {
+  const f = (x) => Math.round(x * 100) / 100;
+  return {
+    TRACK_CIRCUIT: { factor: f(1 + Math.min(1.5, totals.rainMm / 600)), reason: `${totals.rainMm} mm rain in the window lowers ballast resistance` },
+    AXLE_COUNTER: { factor: f(1 + Math.min(0.8, totals.rainMm / 1200)), reason: `${totals.rainMm} mm rain (water ingress in detector heads)` },
+    POINT_MACHINE: { factor: f(1 + Math.min(0.6, totals.rainMm / 1500)), reason: `${totals.rainMm} mm rain (insulation and friction)` },
+    LC_GATE: { factor: f(1 + Math.min(0.5, totals.rainMm / 2000)), reason: `${totals.rainMm} mm rain` },
+    INSULATOR: { factor: f(1 + Math.min(1.2, totals.fogNights / 25)), reason: `${totals.fogNights} fog nights (pollution flashover)` },
+    RAIL: { factor: f(1 + Math.min(0.8, totals.hotDays / 40)), reason: `${totals.hotDays} days at ≥ 40 °C` },
+    CONTACT_WIRE: { factor: f(1 + Math.min(0.5, totals.hotDays / 60)), reason: `${totals.hotDays} days at ≥ 40 °C (sag, hard spots)` }
+  };
+}
+
+/**
+ * Seeded failure log for the `windowDays` before plan start. The in-service
+ * population of each asset class is the censored part of the failure
+ * register (assets still running at census, with their ages); the expected
+ * count in the window is Σ[H(a) − H(a − W)] with the class's generating
+ * Weibull, scaled by the seasonal multiplier above; the log holds that
+ * expected count (rounded), so a class shows a spike only when the weather
+ * multiplier drives it. Event dates and assets are drawn from the RNG and
+ * carry a real reference from the twin (gear id, mast, chainage, TSS).
+ */
+export function generateFailureLog(corridor, failureHistory, pastWeather, rng, { windowDays = 90, planStart = '2026-09-07' } = {}) {
+  const totals = weatherTotals(pastWeather);
+  const mult = seasonalHazardMultipliers(totals);
+  const startIso = toIsoDate(planStart);
+  const signals = corridor.signals || [];
+  const pickSig = (pred) => {
+    const list = signals.filter(pred);
+    return list.length ? rng.pick(list).id : null;
+  };
+  const junctions = corridor.stations.filter((s) => s.junction);
+  const events = [];
+  const expectedTrue = {};
+  let seq = 0;
+  for (const [cls, p] of Object.entries(ASSET_CLASS_PARAMS)) {
+    const ages = (failureHistory[cls] || []).filter((r) => !r.failed).map((r) => r.t);
+    const H = (t) => Math.pow(Math.max(0, t) / p.eta, p.beta);
+    const base = ages.reduce((a, t) => a + H(t) - H(t - windowDays), 0);
+    const factor = mult[cls] ? mult[cls].factor : 1;
+    expectedTrue[cls] = Math.round(base * factor * 100) / 100;
+    const n = Math.round(base * factor); // expected count under the seasonal multiplier (dates and assets are drawn)
+    for (let i = 0; i < n; i++) {
+      seq++;
+      const daysAgo = rng.int(1, windowDays);
+      const km = Math.round(rng.range(0.5, corridor.lengthKm - 0.5) * 100) / 100;
+      let assetRef;
+      if (cls === 'POINT_MACHINE' || cls === 'TURNOUT') assetRef = pickSig((g) => g.kind === 'POINT');
+      else if (cls === 'TRACK_CIRCUIT') assetRef = pickSig((g) => g.kind === 'TRACK_CIRCUIT' && g.detection !== 'SSDAC');
+      else if (cls === 'AXLE_COUNTER') assetRef = pickSig((g) => g.detection === 'SSDAC');
+      else if (cls === 'LC_GATE') assetRef = pickSig((g) => g.kind === 'LC_GATE');
+      else if (cls === 'CABLE') assetRef = pickSig((g) => g.kind !== 'POINT');
+      else if (cls === 'EI') assetRef = `EI-${rng.pick(junctions).code}`;
+      else if (cls === 'TSS') assetRef = rng.pick(corridor.tss).code;
+      else if (cls === 'CONTACT_WIRE' || cls === 'INSULATOR' || cls === 'CANTILEVER' || cls === 'NEUTRAL_SECTION') assetRef = `mast ${kmToMast(km)}`;
+      else assetRef = `km ${formatChainage(km)}`;
+      events.push({ id: `FL/${corridor.code}/${seq}`, assetClass: cls, system: CLASS_SYSTEM[cls], daysAgo, date: addDaysIso(startIso, -daysAgo), assetRef, source: 'seeded' });
+    }
+  }
+  events.sort((a, b) => a.daysAgo - b.daysAgo || a.id.localeCompare(b.id));
+  return {
+    windowDays,
+    source: 'seeded',
+    note: 'Seeded failure log: per class, the count expected from the generating Weibull hazard of the in-service population, scaled by weather-driven seasonal multipliers (assumed couplings); dates and assets drawn at random.',
+    weather: totals,
+    multipliers: mult,
+    expectedTrue,
+    events
+  };
+}
+
+/* ------------------------------------------------------------------------ */
 /* Bundle                                                                    */
 /* ------------------------------------------------------------------------ */
 
-export function buildFeeds(corridor, { seed = 26027, forecastDays = 30 } = {}) {
+/**
+ * @param corridor enriched corridor
+ * @param opts.seed       RNG seed (26027)
+ * @param opts.forecastDays FOIS / weather horizon (30)
+ * @param opts.planStart  plan start (Date or 'YYYY-MM-DD'); dates the weather feed and the failure log
+ * @param opts.dqRecords  append the labelled data-quality test records (true)
+ */
+export function buildFeeds(corridor, { seed = 26027, forecastDays = 30, planStart = '2026-09-07', dqRecords = true } = {}) {
   const rng = createRng(seed + corridor.id.length * 31 + corridor.lengthKm);
   const timetable = generateTimetable(corridor, rng);
   const freight = generateFreightForecast(corridor, rng, forecastDays);
@@ -551,7 +805,19 @@ export function buildFeeds(corridor, { seed = 26027, forecastDays = 30 } = {}) {
   const failureHistory = generateFailureHistory(shared);
   const escalationHistory = generateEscalationHistory(shared);
   const executionLog = generateExecutionLog(shared);
-  return { corridorId: corridor.id, seed, timetable, freight, tms, smms, tdms, machines, crews, failureHistory, escalationHistory, executionLog };
+  // separate streams: adding these never moves the records above
+  annotateInspections({ tms, smms, tdms }, createRng((seed ^ 0x1b5e) + corridor.lengthKm));
+  if (dqRecords) {
+    const dq = generateDqRecords(corridor, { tms, smms, tdms });
+    tms.push(...dq.tms);
+    smms.push(...dq.smms);
+    tdms.push(...dq.tdms);
+  }
+  const startIso = toIsoDate(planStart);
+  const weather = buildWeatherFeed(corridor, seed, startIso, forecastDays);
+  const pastWeather = buildWeatherFeed(corridor, seed, addDaysIso(startIso, -90), 90);
+  const failureLog = generateFailureLog(corridor, failureHistory, pastWeather, createRng((seed ^ 0xfa11) + corridor.lengthKm), { windowDays: 90, planStart: startIso });
+  return { corridorId: corridor.id, seed, planStart: startIso, timetable, freight, tms, smms, tdms, machines, crews, failureHistory, escalationHistory, executionLog, weather, failureLog };
 }
 
 export function assetClassOf(workType) {

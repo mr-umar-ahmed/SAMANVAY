@@ -93,6 +93,41 @@
 .cmap-depot.crew { border-radius: 50% 50% 2px 2px; }
 .cmap-pin { position: absolute; transform: translate(-50%, -100%); cursor: default; filter: drop-shadow(0 1px 1px rgba(17, 17, 17, 0.3)); }
 
+/* S&T signalling assets — var(--smms) is the S&T department colour.
+   Signal = upright post with a lamp (Distant: hollow lamp), points = diamond,
+   track circuit = short tick, LC gate = open square (dashed if non-interlocked).
+   UP-line assets sit above the track, DN below, BOTH on it. */
+.cmap-sa { position: absolute; left: 0; top: 0; display: block; box-sizing: border-box; transform: translate(-50%, -50%); cursor: pointer; }
+.cmap-sa::after { content: ''; position: absolute; inset: -5px; }
+.cmap-sa.l-up { top: -8px; }
+.cmap-sa.l-dn { top: 8px; }
+.cmap-sa.k-sig { width: 3px; height: 11px; border-radius: 1px; background: var(--smms); box-shadow: 0 0 0 1px var(--bg-1); }
+.cmap-sa.k-sig::before { content: ''; position: absolute; left: 50%; top: -4px; width: 7px; height: 7px; margin-left: -3.5px; box-sizing: border-box; border-radius: 50%; background: var(--smms); border: 1.5px solid var(--bg-1); }
+.cmap-sa.k-sig.distant::before { background: var(--bg-1); border-color: var(--smms); }
+.cmap-sa.k-point { width: 7px; height: 7px; background: var(--smms); border: 1px solid var(--bg-1); transform: translate(-50%, -50%) rotate(45deg); }
+.cmap-sa.k-tc { width: 9px; height: 3px; border-radius: 1px; background: var(--smms); box-shadow: 0 0 0 1px var(--bg-1); }
+.cmap-sa.k-lc { width: 9px; height: 9px; border-radius: 1px; background: var(--bg-1); border: 2px solid var(--smms); }
+.cmap-sa.k-lc.unint { border-style: dashed; }
+.cmap-sa.in-legend { position: relative; transform: none; cursor: default; flex: none; }
+.cmap-sa.in-legend::after { display: none; }
+.cmap-sa.k-sig.in-legend { margin-top: 3px; }
+.cmap-sa.k-point.in-legend { transform: rotate(45deg); }
+.cmap-sa-group {
+  position: absolute;
+  left: 0;
+  top: 9px;
+  transform: translateX(-50%);
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--smms);
+  background: var(--bg-1);
+  color: var(--smms);
+  font: 600 9px/1.5 var(--font-mono);
+  white-space: nowrap;
+  cursor: zoom-in;
+}
+.cmap-legend .sw.diamond { transform: rotate(45deg); width: 7px; height: 7px; }
+
 /* Selection ring */
 @keyframes cmap-pulse { 0% { stroke-opacity: 0.9; } 50% { stroke-opacity: 0.35; } 100% { stroke-opacity: 0.9; } }
 .cmap-pulse { animation: cmap-pulse 1.6s ease-in-out infinite; }
