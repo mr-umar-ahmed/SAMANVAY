@@ -17,6 +17,7 @@ import { nextTrainAt } from '../../engine/select';
 import type { Dept, RunLine, Snapshot, Train } from '../../engine/types';
 import { useT } from '../../i18n';
 import { DEPT_LABEL, nowMinuteIST, timeAgo } from '../../lib/format';
+import { SEVERITY_THRESHOLDS } from '../../lib/triage';
 import { deptForCategory, useAppStore, type HazardReport, type ReportCategory } from '../../store/useAppStore';
 import { Badge, Callout, Card, CardBody, CardHead, DataTable, DeptBadge, PageHeader, PlanPending, StatTile, StatusBadge, Tabs, type Column, type Tone } from '../../components/ui';
 import { SimLabel } from '../../components/ui/extras';
@@ -92,6 +93,11 @@ const strings = {
     nextNone: 'None today',
     emptyDept: 'No open reports for {dept}.',
     emptyFilter: 'No reports match these filters.',
+    severityRule: 'Where the reporter did not choose a severity, it is computed from a rule-based points table (category, minutes to the next train, premium service, running line, TSR in force): high at {h} points or more, medium at {m} or more, else low. It is not a model.',
+    sevComputed: 'computed',
+    sevComputedTitle: 'Computed by the rule-based points table',
+    sevReporterTitle: 'Chosen by the reporter',
+    catSuggested: 'rule suggests {cat}',
   },
   hi: {
     title: 'घटनाएँ',
@@ -151,6 +157,11 @@ const strings = {
     nextNone: 'आज कोई नहीं',
     emptyDept: '{dept} के लिए कोई खुली रिपोर्ट नहीं।',
     emptyFilter: 'इन फ़िल्टरों से कोई रिपोर्ट मेल नहीं खाती।',
+    severityRule: 'जहाँ रिपोर्टकर्ता ने गंभीरता नहीं चुनी, वहाँ यह नियम-आधारित अंक तालिका से निकाली जाती है (श्रेणी, अगली ट्रेन तक मिनट, प्रीमियम सेवा, रनिंग लाइन, लागू TSR): {h} या अधिक अंक पर उच्च, {m} या अधिक पर मध्यम, अन्यथा निम्न। यह कोई मॉडल नहीं है।',
+    sevComputed: 'गणना से',
+    sevComputedTitle: 'नियम-आधारित अंक तालिका से गणना',
+    sevReporterTitle: 'रिपोर्टकर्ता द्वारा चुनी गई',
+    catSuggested: 'नियम सुझाव: {cat}',
   },
 } as const;
 
@@ -264,7 +275,18 @@ function Incidents({ snapshot, mode, dept, portal }: { snapshot: Snapshot; mode:
         </span>
       ),
     },
-    { key: 'category', header: t('colCategory'), render: (r) => <span className="small">{t(`cat_${r.category}` as Key)}</span> },
+    {
+      key: 'category',
+      header: t('colCategory'),
+      render: (r) => (
+        <div>
+          <span className="small">{t(`cat_${r.category}` as Key)}</span>
+          {r.suggestedCategory && r.suggestedCategory.category !== r.category && (
+            <div className="tiny muted" title={r.suggestedCategory.matched.join(', ')}>{t('catSuggested', { cat: t(`cat_${r.suggestedCategory.category}` as Key) })}</div>
+          )}
+        </div>
+      ),
+    },
     {
       key: 'location',
       header: t('colLocation'),
@@ -296,8 +318,36 @@ function Incidents({ snapshot, mode, dept, portal }: { snapshot: Snapshot; mode:
         return <span className={`small num ${n.inMin <= 15 ? 'strong' : ''}`} style={n.inMin <= 15 ? { color: 'var(--crit)' } : undefined}>{label}</span>;
       },
     },
-    { key: 'severity', header: t('colSeverity'), hideMobile: true, render: (r) => (r.severity ? <Badge tone={SEV_TONE[r.severity]}>{t(`sev_${r.severity}` as Key)}</Badge> : <span className="muted">—</span>) },
-    { key: 'status', header: t('colStatus'), render: (r) => <StatusBadge status={r.status} /> },
+    {
+      key: 'severity',
+      header: t('colSeverity'),
+      hideMobile: true,
+      render: (r) =>
+        r.severity ? (
+          <div title={r.severityAuto ? [t('sevComputedTitle'), ...(r.severityReasons ?? [])].join('\n') : t('sevReporterTitle')}>
+            <Badge tone={SEV_TONE[r.severity]}>{t(`sev_${r.severity}` as Key)}</Badge>
+            {r.severityAuto && <div className="tiny muted">{t('sevComputed')}</div>}
+          </div>
+        ) : (
+          <span className="muted">—</span>
+        ),
+    },
+    {
+      key: 'status',
+      header: t('colStatus'),
+      render: (r) => (
+        <div className="row-wrap" style={{ gap: 4 }}>
+          <StatusBadge status={r.status} />
+          {/* severity column is hidden on phones; show it here instead */}
+          {r.severity && (
+            <div className="show-mobile tiny">
+              <Badge tone={SEV_TONE[r.severity]}>{t(`sev_${r.severity}` as Key)}</Badge>
+              {r.severityAuto && <span className="muted"> {t('sevComputed')}</span>}
+            </div>
+          )}
+        </div>
+      ),
+    },
   ];
 
   const lede = mode === 'dept' && dept ? t('ledeDept', { dept: DEPT_LABEL[dept].long }) : mode === 'division' ? t('ledeDivision') : t('ledeControl');
@@ -314,7 +364,10 @@ function Incidents({ snapshot, mode, dept, portal }: { snapshot: Snapshot; mode:
         <StatTile label={t('statClosed')} value={counts.CLOSED} sub={t('statClosedSub', { n: scoped.filter((r) => r.status === 'REJECTED').length })} />
       </div>
 
-      <Callout tone="neutral">{t('routing', { rules: routingRules })}</Callout>
+      <Callout tone="neutral">
+        <div>{t('routing', { rules: routingRules })}</div>
+        <div className="mt">{t('severityRule', { h: SEVERITY_THRESHOLDS.high, m: SEVERITY_THRESHOLDS.medium })}</div>
+      </Callout>
 
       <Tabs<StatusTab>
         value={activeTab}

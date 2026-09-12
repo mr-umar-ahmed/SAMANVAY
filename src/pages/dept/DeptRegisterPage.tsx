@@ -11,9 +11,10 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCheck, ClipboardCheck, FilePlus2, RotateCcw, Search, X } from 'lucide-react';
 import { useAppStore, type AuditEntry, type BlockType } from '../../store/useAppStore';
-import type { DataIssue, Dept, Line, Task, Urgency } from '../../engine/types';
+import type { Corridor, DataIssue, Dept, Line, Task, Urgency } from '../../engine/types';
 import { WORK_TYPES, MACHINE_TYPES, CREW_TYPES } from '../../engine/constants.js';
 import { validateDemand } from '../../engine/intake.js';
+import { findSignal, formatChainage, kmToMast, mastToKmId, parseChainage } from '../../engine/corridors.js';
 import { usePortal } from '../../app/usePortal';
 import { can, type PortalId } from '../../auth/portals';
 import { useLang, useT } from '../../i18n';
@@ -167,6 +168,18 @@ const strings = {
     attDone: 'Marked attended — plan re-run',
     attDoneBody: '{id} closed',
     reopened: 'Work reopened — plan re-run',
+    refChainage: 'km/TP {v}',
+    refGear: 'gear {v}',
+    refMast: 'mast {v}',
+    refTss: '{v}',
+    refStation: 'station {v}',
+    resolvedFrom: 'Resolved from {ref}',
+    fNeedsPower: 'Needs power block (OHE isolated)',
+    fNeedsDisc: 'Needs S&T disconnection (T/351)',
+    replaces: 'Replaces register work {id}: when the planning cell accepts this requisition, the planner drops {id} and plans this requisition in its place.',
+    noTaskReplace: 'This record has no planned work (not mapped or closed), so nothing is replaced.',
+    dqTest: 'Data-quality test record',
+    issueFix: 'Fix: {fix}',
   },
   hi: {
     titleTMS: 'ट्रैक रजिस्टर (TMS)',
@@ -293,6 +306,18 @@ const strings = {
     attDone: 'पूर्ण चिह्नित — योजना दोबारा चली',
     attDoneBody: '{id} बंद',
     reopened: 'कार्य फिर खोला — योजना दोबारा चली',
+    refChainage: 'km/TP {v}',
+    refGear: 'उपकरण {v}',
+    refMast: 'मस्तूल {v}',
+    refTss: '{v}',
+    refStation: 'स्टेशन {v}',
+    resolvedFrom: '{ref} से निर्धारित',
+    fNeedsPower: 'पावर ब्लॉक चाहिए (OHE आइसोलेट)',
+    fNeedsDisc: 'S&T डिस्कनेक्शन चाहिए (T/351)',
+    replaces: 'रजिस्टर कार्य {id} की जगह: योजना प्रकोष्ठ के स्वीकार करने पर प्लानर {id} हटाकर इसकी जगह यह requisition नियोजित करेगा।',
+    noTaskReplace: 'इस रिकॉर्ड का कोई नियोजित कार्य नहीं (मैप नहीं या बंद), इसलिए कुछ नहीं बदलेगा।',
+    dqTest: 'डेटा-गुणवत्ता परीक्षण रिकॉर्ड',
+    issueFix: 'सुधार: {fix}',
   },
 } as const;
 
@@ -317,6 +342,8 @@ interface Row {
 }
 
 interface RaiseForm {
+  needsPowerBlock: boolean;
+  needsDisconnection: boolean;
   workType: string;
   line: Line;
   startKm: string;
@@ -331,6 +358,60 @@ interface RaiseForm {
   crew: string;
   incharge: string;
   remarks: string;
+}
+
+/** A register record's location: the native reference and the resolved km (engine/corridors.js, same rules as the normaliser). */
+interface Loc {
+  a: number | null;
+  b: number | null;
+  line: Line | null;
+  ref: { kind: 'chainage' | 'gear' | 'mast' | 'tss' | 'station' | 'km'; text: string } | null;
+}
+
+function locOf(rec: Rec, task: Task | null, corridor: Corridor): Loc {
+  const s = (k: string) => (typeof rec[k] === 'string' && (rec[k] as string).trim() !== '' ? (rec[k] as string).trim() : undefined);
+  const n = (k: string) => (typeof rec[k] === 'number' ? (rec[k] as number) : undefined);
+  const line = (s('line')?.toUpperCase() as Line | undefined) ?? task?.line ?? null;
+  let ref: Loc['ref'] = null;
+  let a: number | null = null;
+  let b: number | null = null;
+  const gear = s('gearId');
+  const mast = s('mastFrom');
+  const tss = s('tssCode');
+  const ch = s('chainageFrom') ?? s('chainage');
+  if (gear) {
+    ref = { kind: 'gear', text: gear };
+    const g = findSignal(corridor, gear) as { km: number } | null;
+    if (g) a = b = g.km;
+  } else if (tss) {
+    ref = { kind: 'tss', text: tss };
+    const x = corridor.tss.find((q) => q.code.toUpperCase() === tss.toUpperCase());
+    if (x) a = b = x.km;
+  } else if (mast) {
+    const to = s('mastTo');
+    ref = { kind: 'mast', text: to && to !== mast ? `${mast} → ${to}` : mast };
+    a = mastToKmId(mast) as number | null;
+    b = to ? (mastToKmId(to) as number | null) : a;
+  } else if (ch) {
+    const to = s('chainageTo');
+    ref = { kind: 'chainage', text: to && to !== ch ? `${ch}–${to}` : ch };
+    a = parseChainage(ch) as number | null;
+    b = to ? (parseChainage(to) as number | null) : a;
+  } else if (n('fromKm') !== undefined || n('km') !== undefined) {
+    a = n('fromKm') ?? n('km') ?? null;
+    b = n('toKm') ?? a;
+  } else if (s('station')) {
+    ref = { kind: 'station', text: s('station')! };
+    const st = corridor.stations.find((q) => q.code === s('station')!.toUpperCase());
+    if (st) a = b = st.km;
+  }
+  // the normalised work is the authority (cable routes, swapped ends …)
+  if (task) {
+    a = task.startKm;
+    b = task.endKm;
+  }
+  if (a !== null && b !== null && b < a) [a, b] = [b, a];
+  return { a, b, line, ref };
 }
 
 interface InspForm {
@@ -427,7 +508,7 @@ export default function DeptRegisterPage() {
       if (tsrOnly && !r.tsrKmph) return false;
       if (unmappedOnly && (r.task || r.closed)) return false;
       if (!needle) return true;
-      const hay = [r.key, r.workType, WT[r.workType]?.label, str(r.rec, 'station'), str(r.rec, 'gearId'), str(r.rec, 'gearType'), str(r.rec, 'mastFrom'), str(r.rec, 'tssCode'), r.task?.sectionLabel, String(nbr(r.rec, 'fromKm') ?? nbr(r.rec, 'km') ?? '')];
+      const hay = [r.key, r.workType, WT[r.workType]?.label, str(r.rec, 'station'), str(r.rec, 'gearId'), str(r.rec, 'gearType'), str(r.rec, 'mastFrom'), str(r.rec, 'tssCode'), str(r.rec, 'chainageFrom'), r.task?.sectionLabel, r.task ? r.task.startKm.toFixed(1) : String(nbr(r.rec, 'fromKm') ?? nbr(r.rec, 'km') ?? '')];
       return hay.some((s) => s && s.toLowerCase().includes(needle));
     });
   }, [rows, q, band, overdueOnly, tsrOnly, unmappedOnly, assetParam]);
@@ -442,10 +523,38 @@ export default function DeptRegisterPage() {
 
   /* ── helpers ─────────────────────────────────────────────── */
   const dueText = (d: number) => (d > 0 ? t('overdueBy', { n: d }) : d === 0 ? t('dueToday') : t('dueIn', { n: -d }));
+  // seeded / imported registers carry native references (km/TP chainage, gear ids, masts), not decimal km
+  const locCache = new Map<string, Loc>();
+  const loc = (r: Row) => {
+    let l = locCache.get(r.key);
+    if (!l) {
+      l = locOf(r.rec, r.task, corridor);
+      locCache.set(r.key, l);
+    }
+    return l;
+  };
   const kmOf = (r: Row) => {
-    const a = nbr(r.rec, 'fromKm') ?? nbr(r.rec, 'km');
-    const b = nbr(r.rec, 'toKm') ?? a;
-    return a === undefined ? null : kmRange(a, b ?? a);
+    const l = loc(r);
+    return l.a === null ? null : kmRange(l.a, l.b ?? l.a);
+  };
+  const refText = (r: Row) => {
+    const l = loc(r);
+    if (!l.ref) return null;
+    return t(l.ref.kind === 'chainage' ? 'refChainage' : l.ref.kind === 'gear' ? 'refGear' : l.ref.kind === 'mast' ? 'refMast' : l.ref.kind === 'tss' ? 'refTss' : 'refStation', { v: l.ref.text });
+  };
+  /** km cell: resolved km with the native reference beside it, and km/TP + mast of the resolved start for cross-reading */
+  const kmCell = (r: Row, withLine: boolean) => {
+    const l = loc(r);
+    const ref = refText(r);
+    return (
+      <span className="stack" style={{ gap: 1 }}>
+        <span className="small num" style={{ whiteSpace: 'nowrap' }}>
+          {kmOf(r) ?? '—'}
+          {withLine ? ` · ${l.line ?? '—'}` : ''}
+        </span>
+        {ref && <span className="tiny muted mono" title={l.a !== null ? `${formatChainage(l.a) ?? ''} · ${kmToMast(l.a) ?? ''}` : undefined}>{ref}</span>}
+      </span>
+    );
   };
   const clearAsset = () =>
     setParams(
@@ -459,9 +568,11 @@ export default function DeptRegisterPage() {
 
   const openRaise = (r: Row) => {
     const spec = WT[r.workType];
-    const from = nbr(r.rec, 'fromKm') ?? nbr(r.rec, 'km') ?? 0;
-    const to = nbr(r.rec, 'toKm') ?? from;
-    const line = (str(r.rec, 'line') as Line | undefined) ?? 'DN';
+    const l = loc(r);
+    const from = Math.round((l.a ?? 0) * 1000) / 1000;
+    const to = Math.round((l.b ?? l.a ?? 0) * 1000) / 1000;
+    const line: Line = l.line === 'UP' || l.line === 'DN' || l.line === 'BOTH' ? l.line : 'DN';
+    const ref = refText(r);
     const summary = [str(r.rec, 'flawType'), str(r.rec, 'gearId'), str(r.rec, 'mastFrom') ? `${str(r.rec, 'mastFrom')} → ${str(r.rec, 'mastTo') ?? ''}` : undefined, str(r.rec, 'tssCode')].filter(Boolean).join(' · ');
     setRaiseRow(r);
     setRaise({
@@ -478,7 +589,9 @@ export default function DeptRegisterPage() {
       speedAfterDays: '',
       crew: r.task?.crew ?? spec?.crew ?? '',
       incharge: user?.name ?? '',
-      remarks: `Register ${r.key}${summary ? ` — ${summary}` : ''}`,
+      remarks: `Register ${r.key}${summary ? ` — ${summary}` : ''}${ref ? ` (${ref})` : ''}`,
+      needsPowerBlock: spec?.blockKind === 'POWER' || spec?.blockKind === 'TRAFFIC_POWER',
+      needsDisconnection: spec?.blockKind === 'DISCONNECTION',
     });
   };
 
@@ -517,6 +630,10 @@ export default function DeptRegisterPage() {
       remarks: raise.remarks || undefined,
       tsrKmph: raiseRow.tsrKmph,
       daysOverdue: raiseRow.daysOverdue,
+      needsPowerBlock: raise.needsPowerBlock,
+      needsDisconnection: raise.needsDisconnection,
+      // the accepted requisition replaces this register work in the plan (acceptRequisition → replacesTaskId)
+      sourceTaskId: raiseRow.task?.id,
       status: 'DRAFT',
       validation: [],
     });
@@ -581,7 +698,7 @@ export default function DeptRegisterPage() {
   const nativeCols: Column<Row>[] =
     dept === 'TMS'
       ? [
-          { key: 'km', header: t('colKm'), render: (r) => <span className="small num" style={{ whiteSpace: 'nowrap' }}>{kmOf(r) ?? '—'} · {str(r.rec, 'line') ?? '—'}</span> },
+          { key: 'km', header: t('colKm'), render: (r) => kmCell(r, true) },
           {
             key: 'asset',
             header: t('colAsset'),
@@ -651,7 +768,7 @@ export default function DeptRegisterPage() {
                 );
               },
             },
-            { key: 'km', header: t('colKm'), hideMobile: true, render: (r) => <span className="small num">{kmOf(r) ?? '—'}</span> },
+            { key: 'km', header: t('colKm'), hideMobile: true, render: (r) => kmCell(r, false) },
           ]
         : [
             {
@@ -671,7 +788,7 @@ export default function DeptRegisterPage() {
                 return (
                   <span className="stack" style={{ gap: 1 }}>
                     <span className="mono small">{tss ?? (mf ? `${mf} → ${str(r.rec, 'mastTo') ?? mf}` : '—')}</span>
-                    <span className="tiny muted num">{kmOf(r) ?? ''} · {str(r.rec, 'line') ?? ''}</span>
+                    <span className="tiny muted num">{kmOf(r) ?? '—'} · {loc(r).line ?? '—'}</span>
                   </span>
                 );
               },
@@ -732,20 +849,31 @@ export default function DeptRegisterPage() {
           <span className="stack" style={{ gap: 1 }}>
             <span className="small">{r.task.sectionLabel}</span>
             <span className="tiny muted num">{kmRange(r.task.startKm, r.task.endKm)} · {r.task.line}</span>
-            {r.issues.map((i) => (
-              <Badge key={i.issue} tone="yellow" title={i.issue}>
-                {i.issue}
-              </Badge>
-            ))}
+            {r.rec.dq === true && <Badge tone="lavender">{t('dqTest')}</Badge>}
+            {r.issues.map((i, k) => {
+              const fix = (i as DataIssue & { suggestedFix?: string }).suggestedFix;
+              return (
+                <Badge key={k} tone="yellow" title={fix ? t('issueFix', { fix }) : i.issue}>
+                  {i.issue}
+                </Badge>
+              );
+            })}
           </span>
         ) : r.closed ? (
           <Badge tone="ok">{t('closed')}</Badge>
         ) : (
           <span className="stack" style={{ gap: 2 }}>
             <Badge tone="crit">{t('notMapped')}</Badge>
-            {r.issues.map((i) => (
-              <span key={i.issue} className="tiny muted">{i.issue}</span>
-            ))}
+            {r.rec.dq === true && <Badge tone="lavender">{t('dqTest')}</Badge>}
+            {r.issues.map((i, k) => {
+              const x = i as DataIssue & { code?: string; suggestedFix?: string };
+              return (
+                <span key={k} className="tiny muted">
+                  {x.code ? <span className="mono">{x.code}</span> : null} {i.issue}
+                  {x.suggestedFix ? <span className="dim"> · {t('issueFix', { fix: x.suggestedFix })}</span> : null}
+                </span>
+              );
+            })}
           </span>
         ),
     },
@@ -970,9 +1098,25 @@ export default function DeptRegisterPage() {
                 <input id="rq-ic" className="input" value={raise.incharge} onChange={(e) => setRaise({ ...raise, incharge: e.target.value })} />
               </Field>
             </div>
+            <div className="row-wrap">
+              <label className="check small">
+                <input type="checkbox" checked={raise.needsPowerBlock} onChange={(e) => setRaise({ ...raise, needsPowerBlock: e.target.checked })} />
+                {t('fNeedsPower')}
+              </label>
+              <label className="check small">
+                <input type="checkbox" checked={raise.needsDisconnection} onChange={(e) => setRaise({ ...raise, needsDisconnection: e.target.checked })} />
+                {t('fNeedsDisc')}
+              </label>
+            </div>
             <Field label={t('fRemarks')} htmlFor="rq-rem">
               <textarea id="rq-rem" className="textarea" rows={3} value={raise.remarks} onChange={(e) => setRaise({ ...raise, remarks: e.target.value })} />
             </Field>
+            {raiseRow && (
+              <Callout tone={raiseRow.task ? 'info' : 'neutral'}>
+                {raiseRow.task ? t('replaces', { id: raiseRow.task.id }) : t('noTaskReplace')}
+                {loc(raiseRow).ref && <div className="tiny muted mt">{t('resolvedFrom', { ref: refText(raiseRow) ?? '' })} → {kmOf(raiseRow) ?? '—'}</div>}
+              </Callout>
+            )}
             {raiseErrors.length > 0 && (
               <Callout tone="crit">
                 <ul style={{ margin: 0, paddingLeft: 16 }}>

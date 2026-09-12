@@ -27,7 +27,9 @@ export type RoleId =
   | 'CHIEF_CONTROLLER'
   | 'BLOCK_PLANNER'
   | 'SR_DEN'
+  | 'ADEN'
   | 'SSE_PWAY'
+  | 'JE_PWAY'
   | 'SR_DSTE'
   | 'SSE_SIGNAL'
   | 'SR_DEE'
@@ -89,7 +91,7 @@ export const PORTALS: Record<PortalId, Portal> = {
     pastel: 'green',
     landing: '/app/tms/today',
     mobileFirst: false,
-    roles: ['SR_DEN', 'SSE_PWAY'],
+    roles: ['SR_DEN', 'ADEN', 'SSE_PWAY', 'JE_PWAY'],
     dept: 'TMS',
   },
   smms: {
@@ -151,7 +153,10 @@ export const ROLES: Record<RoleId, Role> = {
   CHIEF_CONTROLLER: { id: 'CHIEF_CONTROLLER', label: { en: 'Chief Controller / Sr. DOM', hi: 'मुख्य नियंत्रक / वरिष्ठ DOM' }, portal: 'control', can: ['grant', 'lock', 'issueCaution', 'execute', 'triage'] },
   BLOCK_PLANNER: { id: 'BLOCK_PLANNER', label: { en: 'Block Planner', hi: 'ब्लॉक योजनाकार' }, portal: 'planning', can: ['plan', 'intake', 'triage'] },
   SR_DEN: { id: 'SR_DEN', label: { en: 'Sr. DEN (Track)', hi: 'वरिष्ठ मंडल इंजीनियर (ट्रैक)' }, portal: 'tms', can: ['concur:TMS', 'intake', 'triage'], dept: 'TMS' },
+  /** Assistant Divisional Engineer: sub-division in-charge; runs works like the SSE and may record Civil concurrence on behalf of the Sr. DEN. */
+  ADEN: { id: 'ADEN', label: { en: 'Assistant Divisional Engineer (ADEN / AEN)', hi: 'सहायक मंडल इंजीनियर (ADEN / AEN)' }, portal: 'tms', can: ['intake', 'execute', 'report', 'concur:TMS'], dept: 'TMS' },
   SSE_PWAY: { id: 'SSE_PWAY', label: { en: 'SSE / P-Way', hi: 'SSE / पी-वे' }, portal: 'tms', can: ['intake', 'execute', 'report'], dept: 'TMS' },
+  JE_PWAY: { id: 'JE_PWAY', label: { en: 'Junior Engineer / P-Way (JE)', hi: 'कनिष्ठ अभियंता / पी-वे (JE)' }, portal: 'tms', can: ['intake', 'execute', 'report'], dept: 'TMS' },
   SR_DSTE: { id: 'SR_DSTE', label: { en: 'Sr. DSTE (Signal)', hi: 'वरिष्ठ मंडल सिग्नल इंजीनियर' }, portal: 'smms', can: ['concur:SMMS', 'intake', 'triage'], dept: 'SMMS' },
   SSE_SIGNAL: { id: 'SSE_SIGNAL', label: { en: 'SSE / Signal', hi: 'SSE / सिग्नल' }, portal: 'smms', can: ['intake', 'execute', 'report'], dept: 'SMMS' },
   SR_DEE: { id: 'SR_DEE', label: { en: 'Sr. DEE (TRD)', hi: 'वरिष्ठ मंडल विद्युत इंजीनियर (TRD)' }, portal: 'tdms', can: ['concur:TDMS', 'intake', 'triage'], dept: 'TDMS' },
@@ -192,7 +197,9 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
   { id: 'U-CC', name: 'Meenakshi Iyer', email: 'chc@ir.demo', role: 'CHIEF_CONTROLLER', designation: 'Chief Controller (Sr. DOM office)', division: 'Agra' },
   { id: 'U-BP', name: 'Priya Sharma', email: 'planner@ir.demo', role: 'BLOCK_PLANNER', designation: 'Block Planner, Divisional planning cell', division: 'Agra' },
   { id: 'U-DEN', name: 'Vikram Singh', email: 'srden@ir.demo', role: 'SR_DEN', designation: 'Sr. Divisional Engineer (Track)', division: 'Agra' },
+  { id: 'U-AEN', name: 'Deepak Chaturvedi', email: 'aen@ir.demo', role: 'ADEN', designation: 'Assistant Divisional Engineer, Mathura sub-division', division: 'Agra' },
   { id: 'U-PW', name: 'Suresh Patil', email: 'sse.pway@ir.demo', role: 'SSE_PWAY', designation: 'SSE / P-Way, Mathura', division: 'Agra' },
+  { id: 'U-JE', name: 'Pooja Kushwaha', email: 'je.pway@ir.demo', role: 'JE_PWAY', designation: 'JE / P-Way, Kosi Kalan section', division: 'Agra' },
   { id: 'U-DSTE', name: 'Mohammad Ali', email: 'srdste@ir.demo', role: 'SR_DSTE', designation: 'Sr. Divisional Signal & Telecom Engineer', division: 'Agra' },
   { id: 'U-SIG', name: 'Kavita Rao', email: 'sse.sig@ir.demo', role: 'SSE_SIGNAL', designation: 'SSE / Signal, Aligarh', division: 'Agra' },
   { id: 'U-DEE', name: 'Anita Desai', email: 'srdee@ir.demo', role: 'SR_DEE', designation: 'Sr. Divisional Electrical Engineer (TRD)', division: 'Agra' },
@@ -213,7 +220,8 @@ export function portalOfRole(id: RoleId): Portal {
 
 export function can(user: SessionUser | null | undefined, cap: Capability): boolean {
   if (!user) return false;
-  return ROLES[user.role].can.includes(cap);
+  // a persisted session from an older build may carry a role that no longer exists
+  return ROLES[user.role]?.can.includes(cap) ?? false;
 }
 
 export function toSession(a: DemoAccount, demo = true): SessionUser {

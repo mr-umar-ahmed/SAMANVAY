@@ -14,7 +14,8 @@ import { useAppStore, type ExecRecord } from '../../store/useAppStore';
 import { can } from '../../auth/portals';
 import { WORK_TYPES } from '../../engine/constants.js';
 import { adherence, workingBlocks, type WorkingBlock } from '../../engine/select';
-import type { Dept } from '../../engine/types';
+import { mad, median } from '../../engine/anomaly.js';
+import type { Anomaly, Dept } from '../../engine/types';
 import { useT } from '../../i18n';
 import { DEPT_LABEL, dateLabel, download, duration, hhmm, num, pct, timeAgo, toMin } from '../../lib/format';
 import { Badge, Callout, Card, CardBody, CardHead, DataTable, DeptBadge, EmptyState, Field, Modal, PageHeader, PlanPending, Segmented, StatTile, Tabs, type Column } from '../../components/ui';
@@ -117,6 +118,25 @@ const strings = {
     toastRecal: 'Durations recalibrated from {n} records',
     toastRecalFail: 'Re-plan failed — durations not recalibrated',
     toastExport: '{n} records exported',
+    anTitle: 'Overrun anomalies',
+    anSub: 'Robust z-score on actual ÷ planned minutes per work type: z = 0.6745 × (ratio − median) ÷ MAD. A record is flagged when |z| > 3 or its ratio exceeds 1.5; a work type when its median ratio exceeds 1.2. Only work types with at least {min} records are scored.',
+    anNone: 'No overrun anomaly in this run.',
+    anModel: 'Model output on seeded history and the records made on this device.',
+    anRecord: 'Record',
+    anSystematic: 'Systematic',
+    anRatio: 'ratio {v}',
+    anMedian: 'median {v}',
+    anZ: 'z {v}',
+    anBasis: 'Basis per work type',
+    colN: 'Records',
+    colMedian: 'Median ratio',
+    colMad: 'MAD',
+    colFlagged: 'Flagged',
+    anShowAll: 'Show all {n}',
+    anShowFewer: 'Show fewer',
+    sevhigh: 'high',
+    sevmedium: 'medium',
+    sevlow: 'low',
   },
   hi: {
     titleControl: 'निष्पादन लॉग',
@@ -204,6 +224,25 @@ const strings = {
     toastRecal: '{n} रिकॉर्ड से अवधि फिर कैलिब्रेट हुई',
     toastRecalFail: 'पुनः योजना विफल — अवधि कैलिब्रेट नहीं हुई',
     toastExport: '{n} रिकॉर्ड निर्यात',
+    anTitle: 'ओवररन विसंगतियाँ',
+    anSub: 'हर कार्य प्रकार के लिए वास्तविक ÷ नियोजित मिनट पर robust z-score: z = 0.6745 × (अनुपात − माध्यिका) ÷ MAD। |z| > 3 या अनुपात 1.5 से अधिक होने पर रिकॉर्ड चिह्नित; माध्यिका अनुपात 1.2 से अधिक होने पर कार्य प्रकार। केवल कम से कम {min} रिकॉर्ड वाले कार्य प्रकार।',
+    anNone: 'इस रन में कोई ओवररन विसंगति नहीं।',
+    anModel: 'सीडेड इतिहास और इस डिवाइस के रिकॉर्ड पर मॉडल आउटपुट।',
+    anRecord: 'रिकॉर्ड',
+    anSystematic: 'व्यवस्थित',
+    anRatio: 'अनुपात {v}',
+    anMedian: 'माध्यिका {v}',
+    anZ: 'z {v}',
+    anBasis: 'कार्य प्रकार अनुसार आधार',
+    colN: 'रिकॉर्ड',
+    colMedian: 'माध्यिका अनुपात',
+    colMad: 'MAD',
+    colFlagged: 'चिह्नित',
+    anShowAll: 'सभी {n} दिखाएँ',
+    anShowFewer: 'कम दिखाएँ',
+    sevhigh: 'अधिक',
+    sevmedium: 'मध्यम',
+    sevlow: 'कम',
   },
 } as const;
 
@@ -226,6 +265,18 @@ const overrunOf = (r: ExecRecord) => (isCleared(r) && r.actualSpanMin !== undefi
 const csvCell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
 const clockOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 const kmText = (b: WorkingBlock) => `km ${b.startKm.toFixed(1)}–${b.endKm.toFixed(1)}`;
+/** anomaly.js scores a work type only with at least this many records (detectAnomalies minSamples default). */
+const MIN_SAMPLES = 5;
+const AN_LIMIT = 6;
+
+interface BasisRow {
+  wt: string;
+  label: string;
+  n: number;
+  median: number;
+  mad: number;
+  flagged: number;
+}
 
 export default function ExecutionLogPage({ mode = 'control' }: ExecutionLogPageProps) {
   const t = useT(strings);
@@ -295,6 +346,22 @@ export default function ExecutionLogPage({ mode = 'control' }: ExecutionLogPageP
   }, [snapshot]);
 
   const deviceItems = useMemo(() => executionLog.flatMap((r) => r.items).filter((it) => it.done && it.actualMin).length, [executionLog]);
+  const [anAll, setAnAll] = useState(false);
+
+  /* OVERRUN anomalies of this run and the robust z-score basis they were scored on (engine/anomaly.js) */
+  const overruns = useMemo(() => ((snapshot?.anomalies ?? []) as (Anomaly & { workType?: string })[]).filter((a) => a.kind === 'OVERRUN'), [snapshot]);
+  const basis: BasisRow[] = useMemo(() => {
+    if (!snapshot) return [];
+    const byType = new Map<string, number[]>();
+    for (const r of snapshot.feeds.executionLog) if (r.plannedMin > 0 && r.actualMin > 0) byType.set(r.workType, [...(byType.get(r.workType) ?? []), r.actualMin / r.plannedMin]);
+    return [...byType.entries()]
+      .filter(([, xs]) => xs.length >= MIN_SAMPLES)
+      .map(([wt, xs]) => {
+        const med = median(xs) as number;
+        return { wt, label: WT[wt]?.label ?? wt, n: xs.length, median: med, mad: mad(xs, med) as number, flagged: overruns.filter((a) => a.workType === wt && !a.id.startsWith('AN-OVERRUN-TYPE-')).length };
+      })
+      .sort((a, b) => b.flagged - a.flagged || b.median - a.median);
+  }, [snapshot, overruns]);
 
   if (!snapshot) return <PlanPending />;
 
@@ -323,7 +390,8 @@ export default function ExecutionLogPage({ mode = 'control' }: ExecutionLogPageP
     if (!clearFor || !endValid || !kmphValid) return;
     const actualEnd = toMin(endText.trim());
     const speed = fitness === 'tsr' ? kmph : null;
-    clearPossession(clearFor.blockId, { actualEnd, overrunCause: cause.trim() || undefined, speedOnLifting: speed, source: 'control' });
+    // refused (not in progress, no execute capability): the store toasted why
+    if (!clearPossession(clearFor.blockId, { actualEnd, overrunCause: cause.trim() || undefined, speedOnLifting: speed, source: 'control' })) return;
     toast({ title: t('toastCleared', { id: clearFor.blockId }), body: speed ? t('tsrSpeed', { v: speed }) : t('fitFull', { mps }), tone: 'ok' });
     if (speed && clearBlock) {
       addTsr({ corridorId, line: clearBlock.line, fromKm: clearBlock.startKm, toKm: clearBlock.endKm, kmph: speed, reason: `Speed after block ${clearBlock.id}${cause.trim() ? ` — ${cause.trim()}` : ''}`, status: 'IN_FORCE', blockId: clearBlock.id });
@@ -469,7 +537,64 @@ export default function ExecutionLogPage({ mode = 'control' }: ExecutionLogPageP
         <StatTile label={t('statBurst')} value={stats.burst} sub={t('statBurstSub')} />
         <StatTile label={t('statTsr')} value={clearedWithTsr} sub={t('statTsrSub', { mps })} />
         <StatTile label={t('statActive')} value={stats.active} />
+        <StatTile label={t('anTitle')} value={overruns.length} sub={`${overruns.filter((a) => a.severity === 'high').length} ${t('sevhigh')} · ${overruns.filter((a) => a.id.startsWith('AN-OVERRUN-TYPE-')).length} ${t('anSystematic').toLowerCase()}`} pastel={overruns.some((a) => a.severity === 'high') ? 'pink' : undefined} />
       </div>
+
+      <Card tour="overrun-anomalies">
+        <CardHead title={t('anTitle')} sub={t('anSub', { min: MIN_SAMPLES })} right={<SimLabel kind="model" />} />
+        <CardBody>
+          {overruns.length === 0 ? (
+            <div className="small muted">{t('anNone')}</div>
+          ) : (
+            <div className="stack">
+              {(anAll ? overruns : overruns.slice(0, AN_LIMIT)).map((a) => {
+                const systematic = a.id.startsWith('AN-OVERRUN-TYPE-');
+                return (
+                  <div key={a.id} className="well stack" style={{ gap: 3 }}>
+                    <div className="row-wrap" style={{ gap: 6 }}>
+                      <Badge tone={a.severity === 'high' ? 'crit' : a.severity === 'medium' ? 'warn' : 'gray'}>{t(`sev${a.severity}` as const)}</Badge>
+                      <Badge tone="outline">{systematic ? t('anSystematic') : t('anRecord')}</Badge>
+                      <span className="small strong grow">{a.title}</span>
+                    </div>
+                    <div className="tiny muted">{a.detail}</div>
+                    <div className="row-wrap tiny num" style={{ gap: 8 }}>
+                      {a.value !== undefined && <span>{t('anRatio', { v: a.value })}</span>}
+                      {a.expected !== undefined && <span className="muted">{t('anMedian', { v: a.expected })}</span>}
+                      {a.z !== undefined && <span className="strong">{t('anZ', { v: a.z })}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+              {overruns.length > AN_LIMIT && (
+                <div>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAnAll((v) => !v)}>
+                    {anAll ? t('anShowFewer') : t('anShowAll', { n: overruns.length })}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="tiny muted mt">{t('anModel')}</div>
+        </CardBody>
+        {basis.length > 0 && (
+          <CardBody flush>
+            <div className="section-title" style={{ padding: '8px 16px 0' }}>{t('anBasis')}</div>
+            <DataTable<BasisRow>
+              columns={[
+                { key: 'label', header: t('colWork'), render: (b) => <span className="small">{b.label}</span> },
+                { key: 'n', header: t('colN'), num: true, render: (b) => <span className="num">{b.n}</span> },
+                { key: 'median', header: t('colMedian'), num: true, render: (b) => <Badge tone={b.median > 1.2 ? 'warn' : 'gray'}>{b.median.toFixed(2)}</Badge> },
+                { key: 'mad', header: t('colMad'), num: true, hideMobile: true, render: (b) => <span className="num">{b.mad.toFixed(3)}</span> },
+                { key: 'flagged', header: t('colFlagged'), num: true, render: (b) => <span className="num">{b.flagged}</span> },
+              ]}
+              rows={basis}
+              rowKey={(b) => b.wt}
+              compact
+              maxHeight={260}
+            />
+          </CardBody>
+        )}
+      </Card>
 
       <div className="row-between">
         <Tabs<StateFilter>

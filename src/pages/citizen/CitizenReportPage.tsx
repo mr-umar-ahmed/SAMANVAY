@@ -7,18 +7,28 @@
  * appears in the Control Office and department queues of this app on this
  * device. Routing is rule-based on the category (deptForCategory); nothing is
  * inferred from the photo.
+ *
+ * Triage help (lib/triage, keyword rules and a points table — not a model):
+ *  - while typing, suggestCategory(description) may offer a type; it is applied
+ *    only when the reporter taps "Use this".
+ *  - the report is sent without a severity, so the store scores it; the
+ *    confirmation recomputes the same factors (severityFactsAt + computeSeverity,
+ *    same inputs) to explain the priority in the reporter's language.
  */
 import { useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Copy, Inbox, Send } from 'lucide-react';
-import { deptForCategory, useAppStore, type ReportCategory } from '../../store/useAppStore';
+import { CheckCircle2, Copy, Inbox, Lightbulb, Send } from 'lucide-react';
+import { deptForCategory, useAppStore, type HazardReport, type ReportCategory } from '../../store/useAppStore';
 import { getCorridor } from '../../engine/corridors.js';
+import { severityFactsAt } from '../../engine/select';
 import type { Corridor, Dept } from '../../engine/types';
 import { useLang, useT } from '../../i18n';
 import { citizen, type CitizenKey } from '../../i18n/citizen';
-import { copyText } from '../../lib/format';
+import { copyText, nowMinuteIST } from '../../lib/format';
+import { computeSeverity, suggestCategory } from '../../lib/triage';
 import { Callout } from '../../components/ui';
 import { LocationPicker, PhotoCapture, SimLabel, type LocationValue } from '../../components/ui/extras';
+import { PriorityNote, type ComputedPriority } from './CitizenMyReportsPage';
 
 const CATEGORIES: { value: ReportCategory; key: CitizenKey }[] = [
   { value: 'track', key: 'catTrack' },
@@ -29,6 +39,8 @@ const CATEGORIES: { value: ReportCategory; key: CitizenKey }[] = [
   { value: 'obstruction', key: 'catObstruction' },
   { value: 'other', key: 'catOther' },
 ];
+
+const CAT_KEY = Object.fromEntries(CATEGORIES.map((c) => [c.value, c.key])) as Record<ReportCategory, CitizenKey>;
 
 const DEPT_KEY: Record<Dept, CitizenKey> = { TMS: 'deptTMS', SMMS: 'deptSMMS', TDMS: 'deptTDMS' };
 
@@ -43,6 +55,7 @@ export default function CitizenReportPage() {
   const citizenName = useAppStore((s) => s.citizenName);
   const setCitizenName = useAppStore((s) => s.setCitizenName);
   const toast = useAppStore((s) => s.toast);
+  const tsrs = useAppStore((s) => s.tsrs);
 
   // The form does not need the plan: the corridor geometry is static, so a
   // hazard can be reported while the planning engine is still running.
@@ -56,10 +69,14 @@ export default function CitizenReportPage() {
   const [name, setName] = useState(citizenName);
   const [contact, setContact] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ ref: string; dept: Dept | null } | null>(null);
+  const [done, setDone] = useState<{ rep: HazardReport; computed: ComputedPriority | null } | null>(null);
 
   const deptName = (d: Dept | null) => (d ? t(DEPT_KEY[d]) : t('deptControl'));
   const routedTo = deptForCategory(category ?? 'other');
+
+  // keyword suggestion from the description; offered, never applied without a tap
+  const suggestion = useMemo(() => suggestCategory(description), [description]);
+  const offer = suggestion && suggestion.category !== category ? suggestion : null;
 
   const reset = () => {
     setPhoto(null);
@@ -81,6 +98,7 @@ export default function CitizenReportPage() {
     setError(null);
     const who = name.trim();
     if (who !== citizenName) setCitizenName(who);
+    // no `severity` is passed: the store scores the report with the points table (severityAuto)
     const rep = submitReport({
       source: 'citizen',
       reporter: { name: who || 'Citizen', role: 'Citizen', portal: 'citizen', contact: contact.trim() || undefined },
@@ -98,7 +116,16 @@ export default function CitizenReportPage() {
       trainNumber: trainNo.trim() || undefined,
     });
     toast({ title: t('reportToast', { ref: rep.id }), body: t('stepRouted', { dept: deptName(rep.dept) }), tone: 'ok' });
-    setDone({ ref: rep.id, dept: rep.dept });
+    // Recompute the store's factors with the same inputs so the priority can be
+    // explained in the reporter's language. If the level differs (the minute
+    // ticked over between the two calls), PriorityNote parses the stored reasons.
+    let computed: ComputedPriority | null = null;
+    if (rep.severityAuto) {
+      const facts = severityFactsAt(snapshot && snapshot.corridor.id === rep.corridorId ? snapshot : null, tsrs, { km: rep.km, line: rep.line, day: 0, minute: nowMinuteIST() });
+      const sev = computeSeverity({ category: rep.category, ...facts });
+      if (sev.level === rep.severity) computed = { factors: sev.factors, trainNo: facts.nextTrainNo };
+    }
+    setDone({ rep, computed });
     window.scrollTo(0, 0);
   };
 
@@ -109,6 +136,7 @@ export default function CitizenReportPage() {
 
   /* ── after submit: honest confirmation ── */
   if (done) {
+    const ref = done.rep.id;
     return (
       <div className="stack-lg">
         <section className="card">
@@ -120,20 +148,21 @@ export default function CitizenReportPage() {
             <div className="well row" style={{ justifyContent: 'space-between' }}>
               <div>
                 <div className="caps">{t('reportId')}</div>
-                <div className="mono strong" style={{ fontSize: 'var(--fs-xl)' }}>{done.ref}</div>
+                <div className="mono strong" style={{ fontSize: 'var(--fs-xl)' }}>{ref}</div>
               </div>
-              <button type="button" className="btn" style={{ minHeight: 44 }} onClick={() => void copyRef(done.ref)}>
+              <button type="button" className="btn" style={{ minHeight: 44 }} onClick={() => void copyRef(ref)}>
                 <Copy /> {t('copyRef')}
               </button>
             </div>
-            <p>{t('successBody', { ref: done.ref, dept: deptName(done.dept) })}</p>
+            <p>{t('successBody', { ref, dept: deptName(done.rep.dept) })}</p>
+            <PriorityNote report={done.rep} computed={done.computed} />
             <p className="small muted">{t('routingNote')}</p>
             <div className="row-wrap small muted">
               <SimLabel kind="localOnly" />
               <span>{t('localOnlyNote')}</span>
             </div>
             <div className="stack" style={{ gap: 8 }}>
-              <button type="button" className="btn btn-primary btn-lg btn-block" style={{ minHeight: 52 }} onClick={() => nav(`/citizen/reports/${encodeURIComponent(done.ref)}`)}>
+              <button type="button" className="btn btn-primary btn-lg btn-block" style={{ minHeight: 52 }} onClick={() => nav(`/citizen/reports/${encodeURIComponent(ref)}`)}>
                 <Inbox /> {t('trackStatus')}
               </button>
               <button type="button" className="btn btn-lg btn-block" style={{ minHeight: 48 }} onClick={reset}>
@@ -219,6 +248,25 @@ export default function CitizenReportPage() {
               <label htmlFor="cz-desc">{t('whatDidYouSee')}</label>
               <textarea id="cz-desc" className="textarea" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t('describePlaceholder')} lang={lang} />
             </div>
+            {offer ? (
+              <div className="callout callout-info" role="status" aria-live="polite">
+                <Lightbulb />
+                <div className="grow stack" style={{ gap: 6 }}>
+                  <span className="strong">{t('looksLike', { cat: t(CAT_KEY[offer.category]) })}</span>
+                  <span className="tiny">{t('fromWords', { words: offer.matched.join(', ') })}</span>
+                  <button type="button" className="btn btn-sm btn-dark" style={{ minHeight: 40, alignSelf: 'flex-start' }} onClick={() => setCategory(offer.category)}>
+                    {t('useThis')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              category &&
+              suggestion?.category === category && (
+                <p className="tiny muted">
+                  {t('category')}: {t(CAT_KEY[category])} · {t('stepRouted', { dept: deptName(routedTo) })}
+                </p>
+              )
+            )}
             <div className="field">
               <label htmlFor="cz-train">{t('trainNumberOpt')}</label>
               <input id="cz-train" className="input input-lg" inputMode="numeric" autoComplete="off" value={trainNo} onChange={(e) => setTrainNo(e.target.value)} />

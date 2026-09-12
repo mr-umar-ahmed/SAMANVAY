@@ -2,7 +2,12 @@
  * SAMANVAY Planned Block Passenger & Freight Advisory Generator.
  * Creates clean public bulletins for PRS / NTES and FOIS without fake telemetry.
  * Pure isomorphic ES module.
+ *
+ * Bulletin numbers are derived from the block id (stableHash), not a running
+ * sequence, so a bulletin keeps its number when other blocks are added,
+ * refused or moved.
  */
+import { stableHash } from './time.js';
 
 /** ISO week number of a yyyy-mm-dd date (bulletins are numbered by week). */
 function isoWeekOf(iso) {
@@ -17,7 +22,6 @@ function isoWeekOf(iso) {
 export function generateBlockAdvisories(weeklyResult, corridor) {
   const blocks = weeklyResult?.ai?.blocks || [];
   const advisories = [];
-  let seq = 1;
 
   for (const b of blocks) {
     if (!b.lineClosure && b.affectedTrains.length === 0) continue;
@@ -31,9 +35,10 @@ export function generateBlockAdvisories(weeklyResult, corridor) {
     }));
 
     const wk = isoWeekOf(b.date);
+    const ref = stableHash(`ADV|${b.id}`, 5);
     advisories.push({
-      id: `ADV-${String(seq).padStart(3, '0')}`,
-      bulletinNo: `IR/SAMANVAY/${corridor.code.replace('–', '-')}/${wk.year}-W${String(wk.week).padStart(2, '0')}-${String(seq).padStart(3, '0')}`,
+      id: `ADV-${ref}`,
+      bulletinNo: `IR/SAMANVAY/${corridor.code.replace(/–/g, '-')}/${wk.year}-W${String(wk.week).padStart(2, '0')}-${ref}`,
       blockId: b.id,
       day: b.day,
       dateLabel: b.dateLabel || `Day ${b.day}`,
@@ -49,7 +54,6 @@ export function generateBlockAdvisories(weeklyResult, corridor) {
         ? `Traffic regulation on ${b.sectionText} (${b.line} line) from ${b.startText} to ${b.endText}. ${trainNotices.length} train(s) will observe regulated speed or terminal re-timings.`
         : `Track maintenance window on ${b.sectionText} from ${b.startText} to ${b.endText}. All scheduled passenger services running on path.`
     });
-    seq++;
   }
 
   return advisories;

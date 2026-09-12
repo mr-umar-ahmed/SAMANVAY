@@ -15,10 +15,10 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Clock, FileText, Flame, HardHat, MessageSquare, Play, ShieldCheck, Train as TrainIcon, Wifi, WifiOff } from 'lucide-react';
-import { useAppStore } from '../../store/useAppStore';
+import { AlertTriangle, CheckCircle2, Clock, FileText, Flame, HardHat, MessageSquare, Play, ShieldCheck, Timer, Train as TrainIcon, Wifi, WifiOff, Zap } from 'lucide-react';
+import { useAppStore, type ExtensionRequest, type PowerBlockStatus } from '../../store/useAppStore';
 import { can } from '../../auth/portals';
-import { blocksMetByTrain, cautionOrders, disconnectionNotices, workingBlocks, type CautionOrder, type WorkingBlock } from '../../engine/select';
+import { acksForOrder, blocksMetByTrain, blocksRunningPastEnd, cautionOrders, disconnectionNotices, messagesForBlock, workingBlocks, type CautionOrder, type WorkingBlock } from '../../engine/select';
 import type { AffectedTrain, Crew, Dept, Train } from '../../engine/types';
 import { useT } from '../../i18n';
 import { duration, hhmm, kmRange, nowMinuteIST } from '../../lib/format';
@@ -153,6 +153,40 @@ const strings = {
     openTrain: 'Full run',
     inForceDays: 'in force {n} d',
     show: 'Show',
+    extAsk: 'Ask Control for more time',
+    extTitle: 'Ask Control for more time',
+    extMinutes: 'Extra minutes (5–240)',
+    extReason: 'Reason',
+    extReasonPh: 'Why is more time needed? (e.g. rail cut took longer, machine breakdown)',
+    extNewEnd: 'The block would end at {end} instead of {was}.',
+    extInvalid: 'Ask for 5 to 240 minutes and give a reason.',
+    extSend: 'Send request',
+    extToast: 'Extension of {n} min asked · {id}',
+    extToastBody: 'Control decides; you will be notified here.',
+    extHeading: 'Extension requests',
+    extPending: '+{n} min asked at {time} — waiting for Control',
+    extApproved: '+{n} min granted by {by} at {time}',
+    extRefused: '+{n} min refused by {by} at {time}',
+    extControlNote: 'Control: {note}',
+    extWaiting: 'A request is already waiting for Control.',
+    extNotInProgress: 'Available while the possession is in progress.',
+    extended: 'Extended by {n} min',
+    runningLate: 'Running {n} min past the granted end ({end}). Ask Control for more time or clear the line.',
+    thread: 'Messages with Control',
+    threadSub: 'This block’s site messages and Control’s replies',
+    threadNone: 'No messages on this block yet.',
+    fromControl: 'Control',
+    fromSite: 'Site',
+    pbNONE: 'Not recorded',
+    pbPENDING: 'Pending',
+    pbDEENERGISED: 'De-energised (permit to work)',
+    pbENERGISED: 'Energised',
+    powerWarnTitle: 'Power block not recorded as de-energised',
+    powerWarn: 'This block needs OHE isolation. The power-block record is: {status}. Do not work near OHE until TRD confirms the power block and the permit to work.',
+    powerConfirmTitle: 'Start without a de-energised power-block record?',
+    powerConfirmBody: 'The power-block record for {id} ({isolation}) is: {status}. Start only if the OHE has been isolated and earthed on site and TRD has issued the permit to work. Your Start is recorded and Control is told the record was not de-energised.',
+    powerConfirmBtn: 'Start — isolation confirmed on site',
+    powerMsg: 'Possession started with the power-block record {status} (isolation confirmed on site by {name})',
   },
   hi: {
     titleGang: 'आज का पज़ेशन',
@@ -271,6 +305,40 @@ const strings = {
     openTrain: 'पूरी यात्रा',
     inForceDays: '{n} दिन से लागू',
     show: 'दिखाएँ',
+    extAsk: 'कंट्रोल से और समय माँगें',
+    extTitle: 'कंट्रोल से और समय माँगें',
+    extMinutes: 'अतिरिक्त मिनट (5–240)',
+    extReason: 'कारण',
+    extReasonPh: 'और समय क्यों चाहिए? (जैसे रेल कटिंग में देर, मशीन ख़राब)',
+    extNewEnd: 'ब्लॉक {was} के बजाय {end} पर समाप्त होगा।',
+    extInvalid: '5 से 240 मिनट माँगें और कारण लिखें।',
+    extSend: 'अनुरोध भेजें',
+    extToast: '{n} मिनट का विस्तार माँगा · {id}',
+    extToastBody: 'निर्णय कंट्रोल करेगा; सूचना यहीं मिलेगी।',
+    extHeading: 'विस्तार अनुरोध',
+    extPending: '{time} पर +{n} मिनट माँगे — कंट्रोल के निर्णय की प्रतीक्षा',
+    extApproved: '{by} ने {time} पर +{n} मिनट स्वीकृत किए',
+    extRefused: '{by} ने {time} पर +{n} मिनट अस्वीकार किए',
+    extControlNote: 'कंट्रोल: {note}',
+    extWaiting: 'एक अनुरोध पहले से कंट्रोल के पास है।',
+    extNotInProgress: 'पज़ेशन जारी रहने पर उपलब्ध।',
+    extended: '{n} मिनट बढ़ाया गया',
+    runningLate: 'स्वीकृत समाप्ति ({end}) से {n} मिनट अधिक चल रहा है। कंट्रोल से और समय माँगें या लाइन Clear करें।',
+    thread: 'कंट्रोल से संदेश',
+    threadSub: 'इस ब्लॉक के साइट संदेश और कंट्रोल के उत्तर',
+    threadNone: 'इस ब्लॉक पर अभी कोई संदेश नहीं।',
+    fromControl: 'कंट्रोल',
+    fromSite: 'साइट',
+    pbNONE: 'दर्ज नहीं',
+    pbPENDING: 'लंबित',
+    pbDEENERGISED: 'विद्युत बंद (कार्य अनुमति)',
+    pbENERGISED: 'विद्युत चालू',
+    powerWarnTitle: 'पावर ब्लॉक विद्युत-बंद के रूप में दर्ज नहीं',
+    powerWarn: 'इस ब्लॉक में OHE आइसोलेशन आवश्यक है। पावर-ब्लॉक रिकॉर्ड: {status}। TRD द्वारा पावर ब्लॉक और कार्य अनुमति की पुष्टि तक OHE के पास काम न करें।',
+    powerConfirmTitle: 'विद्युत-बंद पावर-ब्लॉक रिकॉर्ड के बिना Start करें?',
+    powerConfirmBody: '{id} ({isolation}) का पावर-ब्लॉक रिकॉर्ड: {status}। Start तभी करें जब साइट पर OHE आइसोलेट व अर्थ हो चुका हो और TRD ने कार्य अनुमति दी हो। आपका Start दर्ज होगा और कंट्रोल को बताया जाएगा कि रिकॉर्ड विद्युत-बंद नहीं था।',
+    powerConfirmBtn: 'Start — साइट पर आइसोलेशन की पुष्टि',
+    powerMsg: 'पावर-ब्लॉक रिकॉर्ड {status} के साथ पज़ेशन शुरू (साइट पर आइसोलेशन की पुष्टि {name} द्वारा)',
   },
 } as const;
 
@@ -353,6 +421,9 @@ export default function FieldTodayPage() {
   const addTsr = useAppStore((s) => s.addTsr);
   const notify = useAppStore((s) => s.notify);
   const toast = useAppStore((s) => s.toast);
+  const extensions = useAppStore((s) => s.extensions);
+  const requestExtension = useAppStore((s) => s.requestExtension);
+  const messages = useAppStore((s) => s.messages);
 
   /* first visit to the field portal: sunlight theme */
   useEffect(() => {
@@ -390,6 +461,16 @@ export default function FieldTodayPage() {
   const [tsrTo, setTsrTo] = useState('');
   const [remarks, setRemarks] = useState('');
   const [trainInput, setTrainInput] = useState(lastTrainNo ?? '');
+  const [extOpen, setExtOpen] = useState(false);
+  const [extMin, setExtMin] = useState('30');
+  const [extReason, setExtReason] = useState('');
+  const [powerConfirmOpen, setPowerConfirmOpen] = useState(false);
+  /* wall-clock minute, refreshed every 30 s (running-late check) */
+  const [nowMin, setNowMin] = useState(() => nowMinuteIST());
+  useEffect(() => {
+    const id = setInterval(() => setNowMin(nowMinuteIST()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   const blocks = useMemo(() => workingBlocks(snapshot, approvals), [snapshot, approvals]);
   const crews = useMemo(() => snapshot?.feeds.crews ?? [], [snapshot]);
@@ -449,7 +530,7 @@ export default function FieldTodayPage() {
 
   const canExecute = can(user, 'execute');
   const ackBy = user?.name ?? 'Loco pilot';
-  const ackedByMe = (orderNo: string) => acks.some((a) => a.orderNo === orderNo && a.by === ackBy);
+  const myAck = (orderNo: string) => acksForOrder(acks, orderNo).find((a) => a.by === ackBy) ?? null;
   const mps = snapshot.corridor.mpsKmph;
   const machineLabel = (id: string) => snapshot.feeds.machines.find((m) => m.id === id)?.label ?? id;
   const crewLabel = (id: string) => crews.find((c) => c.id === id)?.label ?? id;
@@ -466,6 +547,19 @@ export default function FieldTodayPage() {
   const cleared = rec?.status === 'COMPLETED' || rec?.status === 'CLOSED';
   const allDone = !!rec && rec.items.length > 0 && rec.items.every((i) => i.done);
   const t351Pending = focusNotices.some((n) => n.status !== 'RECONNECTED');
+  /* power block: the block kind, or a work in it that asked for OHE isolation */
+  const tasksById = new Map(snapshot.tasks.map((tk) => [tk.id, tk]));
+  const powerNeeded = focus ? focus.kind === 'POWER' || focus.kind === 'TRAFFIC + POWER' || focus.tasks.some((tk) => tasksById.get(tk.id)?.requires?.includes('POWER_BLOCK')) : false;
+  const pbStatus: PowerBlockStatus | null = focus ? powerBlocks[focus.id]?.status ?? null : null;
+  const pbLabel = (st: PowerBlockStatus | null) => t(st ? (`pb${st}` as Key) : 'pbNONE');
+  const powerUnsafe = powerNeeded && pbStatus !== 'DEENERGISED';
+  /* extensions and site messages of the block */
+  const blockExt: ExtensionRequest[] = focus ? extensions.filter((e) => e.blockId === focus.id) : [];
+  const extPendingReq = blockExt.find((e) => e.status === 'PENDING') ?? null;
+  const thread = focus ? messagesForBlock(messages, focus.id) : [];
+  const late = focus && inProgress ? blocksRunningPastEnd(blocks, executionLog, nowMin, 0).find((r) => r.block.id === focus.id) ?? null : null;
+  const extEnabled = !!focus && inProgress && canExecute && !extPendingReq;
+  const extHint = !focus ? null : !canExecute ? t('hintNoExecute') : !inProgress ? t('extNotInProgress') : extPendingReq ? t('extWaiting') : null;
   const startEnabled = !!focus && !rec && canExecute && chk.blocked && chk.protection;
   const doneEnabled = !!focus && inProgress && !allDone && canExecute;
   const clearEnabled = !!focus && inProgress && allDone && canExecute && chk.workDone && chk.lineFit;
@@ -475,8 +569,17 @@ export default function FieldTodayPage() {
   /* ── actions ── */
   const onStart = () => {
     if (!focus || !startEnabled) return;
+    // the store allows Start without a de-energised record; the field user confirms isolation explicitly
+    if (powerUnsafe) {
+      setPowerConfirmOpen(true);
+      return;
+    }
+    doStart(false);
+  };
+  const doStart = (powerOverride: boolean) => {
+    if (!focus || !startEnabled) return;
     const now = nowMinuteIST();
-    startPossession({
+    const ok = startPossession({
       blockId: focus.id,
       corridorId: snapshot.corridor.id,
       date: focus.date,
@@ -489,7 +592,25 @@ export default function FieldTodayPage() {
       items: focus.tasks.map((tk) => ({ taskId: tk.id, label: tk.label, dept: tk.dept, workType: tk.workType, plannedMin: Math.max(0, tk.end - tk.start), done: false })),
       source: 'field',
     });
-    toast({ title: t('toastStart', { hhmm: hhmm(now) }), body: `${focus.id} · ${focus.sectionText} ${focus.line}`, tone: 'ok' });
+    setPowerConfirmOpen(false);
+    if (!ok) return; // refused: the store toasted why
+    if (powerOverride) messageControl(focus.id, t('powerMsg', { status: pbLabel(pbStatus), name: user?.name ?? '' }));
+    toast({ title: t('toastStart', { hhmm: hhmm(now) }), body: `${focus.id} · ${focus.sectionText} ${focus.line}`, tone: powerOverride ? 'warn' : 'ok' });
+  };
+
+  const openExt = () => {
+    setExtMin('30');
+    setExtReason('');
+    setExtOpen(true);
+  };
+  const extN = Math.round(Number(extMin));
+  const extValid = Number.isFinite(extN) && extN >= 5 && extN <= 240 && extReason.trim().length > 0;
+  const onSendExt = () => {
+    if (!focus || !extValid) return;
+    const req = requestExtension(focus.id, { extraMin: extN, reason: extReason.trim() });
+    if (!req) return; // refused: the store toasted why
+    toast({ title: t('extToast', { n: req.extraMin, id: focus.id }), body: t('extToastBody'), tone: 'ok' });
+    setExtOpen(false);
   };
 
   const openDone = () => {
@@ -500,7 +621,8 @@ export default function FieldTodayPage() {
   const doneValid = rec ? rec.items.filter((i) => !i.done).every((i) => Number(doneDraft[i.taskId]) > 0) : false;
   const onConfirmDone = () => {
     if (!focus || !rec || !doneValid) return;
-    for (const it of rec.items.filter((i) => !i.done)) markItemDone(focus.id, it.taskId, Math.round(Number(doneDraft[it.taskId])));
+    const ok = rec.items.filter((i) => !i.done).filter((it) => markItemDone(focus.id, it.taskId, Math.round(Number(doneDraft[it.taskId])))).length;
+    if (!ok) return; // refused: the store toasted why
     notify({ portals: ['control'], kind: 'INFO', title: `Work complete · ${focus.id}`, body: `${focus.sectionText} ${focus.line} — awaiting line clear`, route: `/app/control/board?block=${focus.id}` });
     toast({ title: t('toastDone'), body: focus.id, tone: 'ok' });
     setDoneOpen(false);
@@ -522,7 +644,7 @@ export default function FieldTodayPage() {
   const onConfirmClear = () => {
     if (!focus || !tsrValid) return;
     const kmph = fit === 'tsr' ? Math.round(tsrV) : null;
-    clearPossession(focus.id, { actualEnd: nowMinuteIST(), speedOnLifting: kmph, overrunCause: remarks.trim() || undefined, source: 'field' });
+    if (!clearPossession(focus.id, { actualEnd: nowMinuteIST(), speedOnLifting: kmph, overrunCause: remarks.trim() || undefined, source: 'field' })) return;
     if (kmph) addTsr({ corridorId: snapshot.corridor.id, line: focus.line, fromKm: tsrA, toKm: tsrB, kmph, reason: t('tsrReason', { id: focus.id }), status: 'IN_FORCE', blockId: focus.id });
     if (t351Pending) messageControl(focus.id, remarks.trim() ? `${t('t351Msg')}: ${remarks.trim()}` : t('t351Msg'));
     toast({ title: t('toastClear'), body: kmph ? `${focus.id} · ${kmph} km/h · ${kmRange(tsrA, tsrB)}` : `${focus.id} · ${t('tlFull')}`, tone: 'ok' });
@@ -537,10 +659,9 @@ export default function FieldTodayPage() {
     setMsgOpen(false);
   };
 
+  // one acknowledgement per person, with the train number; the store notifies Control (and toasts a refusal)
   const onAck = (o: CautionOrder) => {
-    ackCaution(o.orderNo);
-    notify({ portals: ['control'], kind: 'OK', title: `Caution ${o.orderNo} acknowledged`, body: `${ackBy}${train ? ` · train ${train.number}` : ''}`, route: '/app/control/caution' });
-    toast({ title: t('toastAck', { no: o.orderNo }), tone: 'ok' });
+    if (ackCaution(o.orderNo, train?.number)) toast({ title: t('toastAck', { no: o.orderNo }), body: train ? `${ackBy} · ${train.number}` : ackBy, tone: 'ok' });
   };
 
   const chooseCrew = (id: string) => {
@@ -563,7 +684,7 @@ export default function FieldTodayPage() {
 
   const orderRow = (o: CautionOrder, withAck: boolean) => {
     const issued = isIssued(o);
-    const mine = ackedByMe(o.orderNo);
+    const mine = myAck(o.orderNo);
     return (
       <div key={o.id} className="well stack" style={{ gap: 6 }}>
         <div className="row-wrap" style={{ gap: 6 }}>
@@ -580,7 +701,10 @@ export default function FieldTodayPage() {
         {withAck && issued && (
           <div>
             {mine ? (
-              <Badge tone="ok" icon={<CheckCircle2 />}>{t('acked')}</Badge>
+              <Badge tone="ok" icon={<CheckCircle2 />}>
+                {t('acked')} {clockOf(mine.at)}
+                {mine.trainNo ? ` · ${mine.trainNo}` : ''}
+              </Badge>
             ) : (
               <button type="button" className="btn btn-dark" style={{ minHeight: 44 }} onClick={() => onAck(o)}>
                 <CheckCircle2 /> {t('ack')}
@@ -610,7 +734,6 @@ export default function FieldTodayPage() {
         ]
       : [];
     const stBadge: { tone: Tone; label: string } | null = focus ? (cleared ? { tone: 'ok', label: t('stCleared') } : inProgress ? { tone: 'warn', label: t('stInProgress') } : { tone: 'ok', label: statusLabel(focus) }) : null;
-    const powerNeeded = focus ? focus.kind === 'POWER' || focus.kind === 'TRAFFIC + POWER' : false;
     const t409b = focusOrders.find((o) => o.formType === 'T/409B');
     const lifts = focusOrders.filter((o) => o.formType === 'T/409' && o.taskId);
 
@@ -685,7 +808,7 @@ export default function FieldTodayPage() {
                       [t('incharge'), focus.approval?.incharge ?? t('notRecorded')],
                       [t('machine'), (focus.approval?.resources?.machineId ? [focus.approval.resources.machineId] : focus.machines).map(machineLabel).join(', ') || t('manual')],
                       [t('t351'), focusNotices.length ? focusNotices.map((n) => `${n.noticeNo} · ${n.status}`).join(', ') : t('notNeeded')],
-                      [t('power'), powerNeeded ? (powerBlocks[focus.id]?.status ?? 'PENDING') : t('notNeeded')],
+                      [t('power'), powerNeeded ? <Badge key="pb" tone={pbStatus === 'DEENERGISED' ? 'ok' : 'warn'} icon={<Zap />}>{pbLabel(pbStatus)}</Badge> : t('notNeeded')],
                       [t('speedAfter'), <span key="s" className="stack" style={{ gap: 2 }}>
                         <span>{t409b ? t('speedT409b', { v: t409b.speedKmph }) : t('speedNormal', { v: mps })}</span>
                         {lifts.map((o) => <span key={o.id} className="small muted">{t('liftsTsr', { v: o.speedKmph, km: kmRange(o.startKm, o.endKm) })}</span>)}
@@ -694,6 +817,15 @@ export default function FieldTodayPage() {
                   />
 
                   <Timeline steps={timelineSteps} />
+
+                  {late && <Callout tone="crit">{t('runningLate', { n: late.overMin, end: hhmm(late.block.end) })}</Callout>}
+
+                  {powerUnsafe && !rec && (
+                    <Callout tone="warn" icon={<Zap />}>
+                      <b>{t('powerWarnTitle')}</b>
+                      <div>{t('powerWarn', { status: pbLabel(pbStatus) })}</div>
+                    </Callout>
+                  )}
 
                   {/* Start → Done → Clear, enabled in sequence */}
                   <div className="stack" data-tour="field-buttons" style={{ gap: 10 }}>
@@ -713,6 +845,37 @@ export default function FieldTodayPage() {
                     )}
                   </div>
 
+                  {/* extension: more time from Control while the possession runs */}
+                  <div className="stack" style={{ gap: 6 }} data-tour="field-extension">
+                    <button type="button" className={`btn btn-block ${late && extEnabled ? 'btn-dark' : ''}`} style={{ minHeight: 48 }} disabled={!extEnabled} onClick={openExt}>
+                      <Timer /> {t('extAsk')}
+                    </button>
+                    {extHint && !cleared && <div className="tiny muted">{extHint}</div>}
+                    {blockExt.length > 0 && (
+                      <div className="stack" style={{ gap: 4 }}>
+                        <span className="tiny caps">{t('extHeading')}</span>
+                        {blockExt.map((e) => (
+                          <div key={e.id} className="row-wrap small" style={{ gap: 6 }}>
+                            <Badge tone={e.status === 'APPROVED' ? 'ok' : e.status === 'REFUSED' ? 'crit' : 'warn'}>
+                              {e.status === 'PENDING'
+                                ? t('extPending', { n: e.extraMin, time: clockOf(e.at) ?? '' })
+                                : e.status === 'APPROVED'
+                                  ? t('extApproved', { n: e.extraMin, by: e.decidedBy ?? '', time: clockOf(e.decidedAt) ?? '' })
+                                  : t('extRefused', { n: e.extraMin, by: e.decidedBy ?? '', time: clockOf(e.decidedAt) ?? '' })}
+                            </Badge>
+                            <span className="muted">{e.reason}</span>
+                            {e.note && <span>{t('extControlNote', { note: e.note })}</span>}
+                          </div>
+                        ))}
+                        {(focus.approval?.extendedMin ?? 0) > 0 && (
+                          <span className="tiny muted num">
+                            {t('extended', { n: focus.approval?.extendedMin ?? 0 })} · {focus.startText}–{focus.endText}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="row-wrap">
                     <button type="button" className="btn" style={{ minHeight: 44 }} onClick={() => setMsgOpen(true)}>
                       <MessageSquare /> {t('msgControl')}
@@ -725,6 +888,41 @@ export default function FieldTodayPage() {
                     </button>
                   </div>
                 </div>
+              </CardBody>
+            </Card>
+
+            {/* site messages of this block with Control's replies */}
+            <Card>
+              <CardHead
+                title={t('thread')}
+                sub={t('threadSub')}
+                icon={<MessageSquare />}
+                right={
+                  <button type="button" className="btn btn-sm" onClick={() => setMsgOpen(true)}>
+                    {t('msgControl')}
+                  </button>
+                }
+              />
+              <CardBody tight>
+                {thread.length === 0 ? (
+                  <div className="empty">{t('threadNone')}</div>
+                ) : (
+                  <div className="stack" style={{ gap: 8 }} aria-live="polite">
+                    {thread.map((m) => {
+                      const ctl = m.from === 'control';
+                      return (
+                        <div key={m.id} className="well stack" style={{ gap: 2, marginLeft: ctl ? 0 : 'auto', marginRight: ctl ? 'auto' : 0, maxWidth: '92%', borderLeft: ctl ? '3px solid var(--info)' : undefined }}>
+                          <div className="row-wrap tiny muted" style={{ gap: 6 }}>
+                            <Badge tone={ctl ? 'info' : 'gray'}>{ctl ? t('fromControl') : t('fromSite')}</Badge>
+                            <span>{m.by}</span>
+                            <span className="num">{clockOf(m.at)}</span>
+                          </div>
+                          <div className="small" style={{ overflowWrap: 'anywhere' }}>{m.text}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardBody>
             </Card>
 
@@ -923,7 +1121,7 @@ export default function FieldTodayPage() {
       >
         <div className="stack">
           <div className="row-wrap">
-            {(['quick1', 'quick2', 'quick3'] as const).map((k: Key) => (
+            {(['quick1', 'quick2'] as const).map((k: Key) => (
               <button key={k} type="button" className="btn btn-sm" onClick={() => setMsgText(t(k))}>{t(k)}</button>
             ))}
           </div>
@@ -1005,6 +1203,60 @@ export default function FieldTodayPage() {
             <input id="clr-r" className="input input-lg" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </div>
         </div>
+      </Modal>
+
+      {/* extension request */}
+      <Modal
+        open={extOpen && !!focus}
+        onClose={() => setExtOpen(false)}
+        title={t('extTitle')}
+        footer={
+          <>
+            <button type="button" className="btn" style={{ minHeight: 44 }} onClick={() => setExtOpen(false)}>{t('cancel')}</button>
+            <button type="button" className="btn btn-primary" style={{ minHeight: 44 }} disabled={!extValid} onClick={onSendExt}>{t('extSend')}</button>
+          </>
+        }
+      >
+        {focus && (
+          <div className="stack">
+            <div className="field">
+              <label htmlFor="ext-min">{t('extMinutes')}</label>
+              <input id="ext-min" className="input input-lg num" type="number" min={5} max={240} step={5} inputMode="numeric" value={extMin} onChange={(e) => setExtMin(e.target.value)} />
+            </div>
+            <div className="row-wrap" role="group" aria-label={t('extMinutes')}>
+              {[15, 30, 45, 60].map((n) => (
+                <button key={n} type="button" className={`btn btn-sm ${extN === n ? 'btn-dark' : ''}`} aria-pressed={extN === n} onClick={() => setExtMin(String(n))}>
+                  +{n}
+                </button>
+              ))}
+            </div>
+            <div className="field">
+              <label htmlFor="ext-reason">{t('extReason')}</label>
+              <textarea id="ext-reason" className="textarea" rows={3} value={extReason} onChange={(e) => setExtReason(e.target.value)} placeholder={t('extReasonPh')} />
+            </div>
+            {Number.isFinite(extN) && extN > 0 && <div className="small num">{t('extNewEnd', { end: hhmm(focus.end + extN), was: focus.endText })}</div>}
+            {!extValid && extReason.trim() !== '' && <div className="small" style={{ color: 'var(--crit)' }}>{t('extInvalid')}</div>}
+          </div>
+        )}
+      </Modal>
+
+      {/* power block not de-energised: explicit confirmation before Start */}
+      <Modal
+        open={powerConfirmOpen && !!focus}
+        onClose={() => setPowerConfirmOpen(false)}
+        title={t('powerConfirmTitle')}
+        footer={
+          <>
+            <button type="button" className="btn" style={{ minHeight: 44 }} onClick={() => setPowerConfirmOpen(false)}>{t('cancel')}</button>
+            <button type="button" className="btn btn-danger" style={{ minHeight: 44 }} onClick={() => doStart(true)}>{t('powerConfirmBtn')}</button>
+          </>
+        }
+      >
+        {focus && (
+          <Callout tone="crit" icon={<Zap />}>
+            {t('powerConfirmBody', { id: focus.id, isolation: focus.powerIsolation ?? focus.sectionText, status: pbLabel(pbStatus) })}
+          </Callout>
+        )}
       </Modal>
 
       <BlockDrawer blockId={drawer.blockId} onClose={() => drawer.close('block')} />

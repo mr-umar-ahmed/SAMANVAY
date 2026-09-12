@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, CheckCircle2, Clock, Download, FileJson, Link2, Lock, Pin, RefreshCw, Send, Sparkles, Users, X } from 'lucide-react';
+import { AlertTriangle, Calendar, CheckCircle2, Clock, Download, FileJson, Gauge, Link2, Lock, Pin, RefreshCw, RotateCcw, Send, Sparkles, Users, X } from 'lucide-react';
 import { usePortal, usePortalDept } from '../../app/usePortal';
 import { can, type PortalId } from '../../auth/portals';
 import { useAppStore } from '../../store/useAppStore';
@@ -16,14 +16,19 @@ import { jointSuggestions, workingBlocks, type JointSuggestion, type WorkingBloc
 import type { Dept, Snapshot, Task } from '../../engine/types';
 import { useT } from '../../i18n';
 import { common } from '../../i18n/common';
-import { addDaysIso, dateLabel, download, duration, kmRange, num } from '../../lib/format';
-import { ArciBar, Badge, Card, CardBody, CardHead, DataTable, DeptBadge, PageHeader, PlanPending, Segmented, type Column } from '../../components/ui';
+import { addDaysIso, dateLabel, download, duration, kmRange, num, pct } from '../../lib/format';
+import { ArciBar, Badge, Card, CardBody, CardHead, DataTable, DeptBadge, PageHeader, PlanPending, Segmented, StatTile, type Column } from '../../components/ui';
 import { FormSheet, PrintButton, SeedStamp, SimLabel } from '../../components/ui/extras';
 import { WeeklyGantt } from '../../components/viz/WeeklyGantt';
 import { StringDiagram, freeWindowsForDay } from '../../components/viz/StringDiagram';
 import { BlockDrawer } from '../../components/domain/BlockDrawer';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
+import { ConflictsPanel } from '../../components/domain/ConflictsPanel';
+import { SafetyBanner } from '../../components/domain/SafetyBanner';
+import { SolverStamp } from '../../components/domain/SolverStamp';
+import { SupersededList } from '../../components/domain/SupersededList';
+import { useConflictRows, useSupersededRows } from '../../components/domain/planHooks';
 import { KpiStrip } from './KpiStrip';
 import { FEED_SEED, FLOW_LABEL, FLOW_TONE, flowState, planStrings, type KpiKey } from './planMetrics';
 
@@ -123,6 +128,15 @@ const strings = {
     noAwait: 'Nothing is awaiting your concurrence.',
     printTitle: 'Weekly block plan · {corridor}',
     printRange: 'Plan week {from} – {to}',
+    sendNothing: 'No block was sent — the drafts changed since the page loaded. Re-open the week.',
+    confTile: 'Mean block confidence',
+    confSub: 'Completion × window reliability over {n} blocks',
+    confNone: 'Not computed in this run',
+    supersededTitle: 'Changed after sending',
+    supersededSub: 'Sent proposals the last re-plan changed. Send the replacement block again for concurrence.',
+    conflictsTitle: 'Conflicts & dependencies',
+    conflictsSub: 'Everything standing in the way of this week, grouped by severity. Rows open the block or the work.',
+    conflictsCount: '{n} open',
   },
   hi: {
     title: 'साप्ताहिक ब्लॉक योजना',
@@ -210,6 +224,15 @@ const strings = {
     noAwait: 'आपकी सहमति की प्रतीक्षा में कुछ नहीं।',
     printTitle: 'साप्ताहिक ब्लॉक योजना · {corridor}',
     printRange: 'योजना सप्ताह {from} – {to}',
+    sendNothing: 'कोई block नहीं भेजा गया — पेज खुलने के बाद ड्राफ़्ट बदल गए। सप्ताह फिर खोलें।',
+    confTile: 'औसत block विश्वसनीयता',
+    confSub: '{n} block पर पूर्णता × खिड़की विश्वसनीयता',
+    confNone: 'इस run में गणित नहीं',
+    supersededTitle: 'भेजने के बाद बदले',
+    supersededSub: 'भेजे गए प्रस्ताव जिन्हें पिछली पुनः योजना ने बदला। विकल्प block सहमति हेतु फिर से भेजें।',
+    conflictsTitle: 'टकराव व निर्भरताएँ',
+    conflictsSub: 'इस सप्ताह की हर बाधा, गंभीरता अनुसार। पंक्तियाँ block या कार्य खोलती हैं।',
+    conflictsCount: '{n} खुले',
   },
 } as const;
 
@@ -297,9 +320,14 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
 
   // Dept: awaiting my concurrence
   const awaiting = useMemo(
-    () => (portalDept ? allBlocks.filter((b) => b.departments.includes(portalDept) && b.status === 'PROPOSED' && !!b.approval?.proposedAt && !b.approval.concur[portalDept]) : []),
+    () => (portalDept ? allBlocks.filter((b) => b.departments.includes(portalDept) && b.state === 'PROPOSED' && !b.approval?.concur[portalDept]) : []),
     [allBlocks, portalDept]
   );
+
+  const conflictRows = useConflictRows(snapshot, allBlocks);
+  const supersededRows = useSupersededRows(snapshot, allBlocks);
+  const meanConf = weekly.kpis.meanBlockConfidence;
+  const confBlocks = weekly.ai.blocks.filter((b) => !!b.confidence).length;
 
   /* ── actions ─────────────────────────────────────────────── */
   const running = planStatus === 'running';
@@ -314,16 +342,21 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
   const handleSend = () => {
     if (!drafts.length || !canPlan) return;
     const ids = drafts.map((b) => b.id);
-    proposeBlocks(ids);
+    const n = proposeBlocks(ids);
+    if (!n) {
+      // the store toasts a missing role or sign-in; zero here means none of the drafts could still be sent
+      if (can(useAppStore.getState().user, 'plan')) toast({ title: t('sendNothing'), tone: 'warn' });
+      return;
+    }
     const from = dateLabel(snapshot.planStart);
     const to = dateLabel(planEnd);
-    notify({ portals: ['control'], kind: 'ACTION', title: t('notifyControlTitle', { n: ids.length, from, to }), body: t('notifyControlBody'), route: '/app/control/handoff' });
+    notify({ portals: ['control'], kind: 'ACTION', title: t('notifyControlTitle', { n, from, to }), body: t('notifyControlBody'), route: '/app/control/handoff' });
     const depts = DEPTS.filter((d) => drafts.some((b) => b.departments.includes(d)));
     for (const d of depts) {
       const n = drafts.filter((b) => b.departments.includes(d)).length;
       notify({ portals: [d.toLowerCase() as PortalId], dept: d, kind: 'ACTION', title: t('notifyDeptTitle', { n }), body: t('notifyDeptBody', { from, to }), route: `/app/${d.toLowerCase()}/blocks` });
     }
-    toast({ title: t('sentTitle', { n: ids.length }), body: t('sentBody', { depts: depts.map(deptName).join(', ') }), tone: 'ok' });
+    toast({ title: t('sentTitle', { n }), body: t('sentBody', { depts: depts.map(deptName).join(', ') }), tone: 'ok' });
     nav('/app/planning/handoff');
   };
 
@@ -335,8 +368,7 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
 
   const handleConcur = (b: WorkingBlock) => {
     if (!portalDept || !canConcur) return;
-    concur(b.id, portalDept);
-    toast({ title: t('concurred', { id: b.id }), body: `${b.sectionText} · ${b.startText}–${b.endText}`, tone: 'ok' });
+    if (concur(b.id, portalDept)) toast({ title: t('concurred', { id: b.id }), body: `${b.sectionText} · ${b.startText}–${b.endText}`, tone: 'ok' });
   };
 
   const handleAcceptJoin = async (j: JointSuggestion) => {
@@ -376,7 +408,7 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
           <span className="row" style={{ gap: 6 }}>
             <span className="mono strong small">{b.id}</span>
             {b.coLocated && <Badge tone="lavender">{t('joint')}</Badge>}
-            {b.status === 'LOCKED' && <Lock size={12} aria-label={tk('f_LOCKED')} />}
+            {b.state === 'LOCKED' && <Lock size={12} aria-label={tk('f_LOCKED')} />}
           </span>
           <span className="tiny muted">{b.kind}</span>
         </div>
@@ -493,6 +525,7 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
               {dateLabel(snapshot.planStart)} – {dateLabel(planEnd)}
             </Badge>
             <SeedStamp seed={FEED_SEED} runId={planVersion} iterations={weekly.ai.search.iterations} ms={snapshot.timing.ms} />
+            <SolverStamp plan={weekly.ai} />
             <SimLabel kind="solver" />
           </>
         }
@@ -524,7 +557,26 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
         }
       />
 
-      <KpiStrip kpis={weekly.kpis} baseKpis={weekly.baseKpis} keys={WEEKLY_KPIS} runId={planVersion} />
+      <SafetyBanner snapshot={snapshot} plan={weekly.ai} kpis={weekly.kpis} tour="weekly-safety" />
+
+      <KpiStrip
+        kpis={weekly.kpis}
+        baseKpis={weekly.baseKpis}
+        keys={WEEKLY_KPIS}
+        runId={planVersion}
+        extra={
+          <StatTile
+            label={t('confTile')}
+            icon={<Gauge size={12} />}
+            value={typeof meanConf === 'number' ? pct(meanConf, 0) : '—'}
+            sub={
+              <span className="row-wrap" style={{ gap: 4 }}>
+                {typeof meanConf === 'number' ? t('confSub', { n: confBlocks }) : t('confNone')} <SimLabel kind="model" short />
+              </span>
+            }
+          />
+        }
+      />
 
       <Card>
         <CardBody tight>
@@ -669,6 +721,22 @@ function WeeklyBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Wee
           </CardBody>
         </Card>
       )}
+
+      {supersededRows.length > 0 && mode !== 'dept' && (
+        <Card>
+          <CardHead title={t('supersededTitle')} sub={t('supersededSub')} icon={<RotateCcw size={16} />} right={<Badge tone="warn">{supersededRows.length}</Badge>} />
+          <CardBody>
+            <SupersededList snapshot={snapshot} blocks={allBlocks} tour="weekly-superseded" />
+          </CardBody>
+        </Card>
+      )}
+
+      <Card tour="weekly-conflicts">
+        <CardHead title={t('conflictsTitle')} sub={t('conflictsSub')} icon={<AlertTriangle size={16} />} right={<Badge tone={conflictRows.some((c) => c.severity === 'high') ? 'crit' : conflictRows.length ? 'warn' : 'ok'}>{t('conflictsCount', { n: conflictRows.length })}</Badge>} />
+        <CardBody>
+          <ConflictsPanel snapshot={snapshot} blocks={allBlocks} bare />
+        </CardBody>
+      </Card>
 
       <div className="grid grid-2" style={{ alignItems: 'start' }}>
         <Card>

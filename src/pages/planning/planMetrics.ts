@@ -102,15 +102,24 @@ export function formatKpiDelta(key: KpiKey, d: number | null): string {
 
 /* ── Block workflow state ───────────────────────────────────── */
 
-export type FlowState = 'DRAFT' | 'AWAITING' | 'READY' | 'GRANTED' | 'LOCKED' | 'REFUSED';
+export type FlowState = 'DRAFT' | 'AWAITING' | 'READY' | 'GRANTED' | 'LOCKED' | 'REFUSED' | 'SUPERSEDED';
 
+/** Planning-page label of the derived workflow state (select.workflowState via WorkingBlock.state). */
 export function flowState(b: WorkingBlock): FlowState {
-  if (b.status === 'LOCKED') return 'LOCKED';
-  if (b.status === 'GRANTED') return 'GRANTED';
-  if (b.status === 'REFUSED') return 'REFUSED';
-  if (b.concurred) return 'READY';
-  if (b.approval?.proposedAt) return 'AWAITING';
-  return 'DRAFT';
+  switch (b.state) {
+    case 'PROPOSED':
+      return 'AWAITING';
+    case 'CONCURRED':
+      return 'READY';
+    case 'GRANTED':
+    case 'LOCKED':
+    case 'REFUSED':
+    case 'SUPERSEDED':
+    case 'DRAFT':
+      return b.state;
+    default:
+      return 'DRAFT';
+  }
 }
 
 export const FLOW_TONE: Record<FlowState, 'gray' | 'warn' | 'ok' | 'info' | 'crit' | 'blue'> = {
@@ -120,6 +129,7 @@ export const FLOW_TONE: Record<FlowState, 'gray' | 'warn' | 'ok' | 'info' | 'cri
   GRANTED: 'ok',
   LOCKED: 'info',
   REFUSED: 'crit',
+  SUPERSEDED: 'warn',
 };
 
 /* ── Hourly occupancy profile ───────────────────────────────── */
@@ -237,6 +247,7 @@ export const planStrings = {
     f_GRANTED: 'Granted',
     f_LOCKED: 'Locked',
     f_REFUSED: 'Refused',
+    f_SUPERSEDED: 'Changed by re-plan — send again',
   },
   hi: {
     k_availability: 'कॉरिडोर उपलब्धता',
@@ -260,6 +271,7 @@ export const planStrings = {
     f_GRANTED: 'प्रदान',
     f_LOCKED: 'लॉक',
     f_REFUSED: 'अस्वीकृत',
+    f_SUPERSEDED: 'पुनः योजना से बदला — फिर से भेजें',
   },
 } as const;
 
@@ -267,4 +279,4 @@ export type PlanKey = keyof typeof planStrings.en;
 
 export const KPI_LABEL: Record<KpiKey, PlanKey> = { availability: 'k_availability', closure: 'k_closure', colocation: 'k_colocation', mandatory: 'k_mandatory', delay: 'k_delay', tsrDays: 'k_tsrDays' };
 export const KPI_METHOD: Record<KpiKey, PlanKey> = { availability: 'm_availability', closure: 'm_closure', colocation: 'm_colocation', mandatory: 'm_mandatory', delay: 'm_delay', tsrDays: 'm_tsrDays' };
-export const FLOW_LABEL: Record<FlowState, PlanKey> = { DRAFT: 'f_DRAFT', AWAITING: 'f_AWAITING', READY: 'f_READY', GRANTED: 'f_GRANTED', LOCKED: 'f_LOCKED', REFUSED: 'f_REFUSED' };
+export const FLOW_LABEL: Record<FlowState, PlanKey> = { DRAFT: 'f_DRAFT', AWAITING: 'f_AWAITING', READY: 'f_READY', GRANTED: 'f_GRANTED', LOCKED: 'f_LOCKED', REFUSED: 'f_REFUSED', SUPERSEDED: 'f_SUPERSEDED' };

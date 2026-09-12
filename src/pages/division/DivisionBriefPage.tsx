@@ -9,7 +9,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Printer, Send } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import type { Dept, Kpis } from '../../engine/types';
+import type { Anomaly, Corridor, Dept, Kpis } from '../../engine/types';
+import { CORRIDORS } from '../../engine/corridors.js';
 import { adherence, derivedEscalations, workingBlocks } from '../../engine/select';
 import { can } from '../../auth/portals';
 import { useT } from '../../i18n';
@@ -17,6 +18,8 @@ import { common } from '../../i18n/common';
 import { DEPT_LABEL, dateLabel, num, pct, pts, rupees, signed, timeAgo } from '../../lib/format';
 import { Badge, Callout, Card, CardBody, CardFoot, CardHead, DataTable, DeptBadge, EmptyState, Field, Modal, PageHeader, PlanPending, StatTile, type Column } from '../../components/ui';
 import { RingGauge, Sparkline } from '../../components/viz';
+import { NetworkMap } from '../../components/viz/NetworkMap';
+import { useCorridorSwitch } from '../../components/domain/planHooks';
 import { SeedStamp, SimLabel, SourceLabel } from '../../components/ui/extras';
 import { roiSummary } from './roiSummary';
 
@@ -24,6 +27,10 @@ import { roiSummary } from './roiSummary';
 const ENGINE_SEED = 26027;
 const DEPTS: Dept[] = ['TMS', 'SMMS', 'TDMS'];
 const DAY_MS = 86400000;
+const CORRIDOR_LIST = CORRIDORS as Corridor[];
+const ZONE_COUNT = new Set(CORRIDOR_LIST.map((c) => c.zone)).size;
+const SEV_ORDER: Record<Anomaly['severity'], number> = { high: 0, medium: 1, low: 2 };
+const SEV_TONE: Record<Anomaly['severity'], 'crit' | 'warn' | 'gray'> = { high: 'crit', medium: 'warn', low: 'gray' };
 /** Age of a timestamp against the wall clock (same basis as lib/format timeAgo). */
 const ageMs = (iso: string) => Date.now() - new Date(iso).getTime();
 
@@ -52,7 +59,7 @@ const strings = {
     baselineShort: 'baseline {v}',
     noMandatory: 'No mandatory works',
     outcomesTitle: 'Outcomes on {corridor}',
-    outcomesSub: 'Plan vs baseline for the current corridor. Other corridors are planned when selected in the top bar.',
+    outcomesSub: 'Plan vs baseline for the current corridor. Other corridors are planned when selected in the top bar or in the corridor network below.',
     colMetric: 'Metric',
     colBaseline: 'Baseline',
     colPlan: 'Plan',
@@ -131,6 +138,19 @@ const strings = {
     sentBody: 'To {dept}',
     needsNote: 'Write the direction first',
     noAuth: 'Directions need the authorise capability (DRM).',
+    netTitle: 'Corridor network',
+    netSub: '{n} corridors in {z} zones, one planned at a time. Select one to switch.',
+    anTitle: 'Anomalies in this run',
+    anSub: 'Overruns in the execution log, failure spikes against the Weibull fit, register values out of range',
+    anHigh: '{n} high',
+    anMedium: '{n} medium',
+    anLow: '{n} low',
+    anNone: 'No anomaly flagged in this run.',
+    anMissing: 'This plan run did not compute anomalies.',
+    anMore: '{n} more in this run',
+    anKindOVERRUN: 'Overrun',
+    anKindFAILURE_SPIKE: 'Failure spike',
+    anKindDATA: 'Register data',
   },
   hi: {
     title: 'मंडल सार',
@@ -153,7 +173,7 @@ const strings = {
     baselineShort: 'आधार-रेखा {v}',
     noMandatory: 'कोई अनिवार्य कार्य नहीं',
     outcomesTitle: '{corridor} पर परिणाम',
-    outcomesSub: 'वर्तमान कॉरिडोर के लिए योजना बनाम आधार-रेखा। अन्य कॉरिडोर ऊपर चुनने पर नियोजित होते हैं।',
+    outcomesSub: 'वर्तमान कॉरिडोर के लिए योजना बनाम आधार-रेखा। अन्य कॉरिडोर ऊपर या नीचे कॉरिडोर नेटवर्क में चुनने पर नियोजित होते हैं।',
     colMetric: 'मापदंड',
     colBaseline: 'आधार-रेखा',
     colPlan: 'योजना',
@@ -232,6 +252,19 @@ const strings = {
     sentBody: '{dept} को',
     needsNote: 'पहले निर्देश लिखें',
     noAuth: 'निर्देश के लिए authorise क्षमता (DRM) चाहिए।',
+    netTitle: 'कॉरिडोर नेटवर्क',
+    netSub: '{z} ज़ोन में {n} कॉरिडोर, एक समय में एक की योजना। बदलने के लिए एक चुनें।',
+    anTitle: 'इस run में विसंगतियाँ',
+    anSub: 'निष्पादन लॉग में overrun, Weibull फ़िट की तुलना में विफलता वृद्धि, सीमा से बाहर रजिस्टर मान',
+    anHigh: '{n} उच्च',
+    anMedium: '{n} मध्यम',
+    anLow: '{n} निम्न',
+    anNone: 'इस run में कोई विसंगति नहीं मिली।',
+    anMissing: 'इस योजना run में विसंगतियाँ नहीं गिनी गईं।',
+    anMore: 'इस run में {n} और',
+    anKindOVERRUN: 'Overrun',
+    anKindFAILURE_SPIKE: 'विफलता वृद्धि',
+    anKindDATA: 'रजिस्टर डेटा',
   },
 } as const;
 
@@ -303,6 +336,8 @@ export default function DivisionBriefPage() {
   const roiAssumptions = useAppStore((s) => s.roiAssumptions);
   const direct = useAppStore((s) => s.direct);
   const toast = useAppStore((s) => s.toast);
+  const activeCorridorId = useAppStore((s) => s.corridorId);
+  const { request: requestCorridor, dialog: corridorDialog } = useCorridorSwitch();
 
   const [showTargets, setShowTargets] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -379,6 +414,15 @@ export default function DivisionBriefPage() {
     () => corridorReports.filter((r) => (r.status === 'UNVERIFIED' || r.status === 'TRIAGED') && ageMs(r.at) > DAY_MS).slice(0, 5),
     [corridorReports]
   );
+
+  const anomalyList = snapshot?.anomalies;
+  const anomalies = useMemo(() => {
+    if (!anomalyList) return null;
+    const by: Record<Anomaly['severity'], number> = { high: 0, medium: 0, low: 0 };
+    for (const a of anomalyList) by[a.severity]++;
+    const top = [...anomalyList].sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]).slice(0, 4);
+    return { by, top, total: anomalyList.length };
+  }, [anomalyList]);
 
   if (!snapshot || !roi) return <PlanPending />;
 
@@ -538,6 +582,47 @@ export default function DivisionBriefPage() {
                 );
               })}
             </div>
+          </CardBody>
+        </Card>
+      </div>
+
+      <div className="grid grid-main-aside">
+        <Card>
+          <CardHead title={t('netTitle')} sub={t('netSub', { n: CORRIDOR_LIST.length, z: ZONE_COUNT })} />
+          <CardBody>
+            <NetworkMap activeId={activeCorridorId} onSelect={requestCorridor} height={280} />
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHead title={t('anTitle')} sub={t('anSub')} right={<SimLabel kind="model" short />} />
+          <CardBody>
+            {!anomalies ? (
+              <EmptyState title={t('anMissing')} />
+            ) : anomalies.total === 0 ? (
+              <EmptyState title={t('anNone')} />
+            ) : (
+              <div className="stack">
+                <div className="row-wrap" style={{ gap: 6 }}>
+                  <Badge tone="crit">{t('anHigh', { n: num(anomalies.by.high) })}</Badge>
+                  <Badge tone="warn">{t('anMedium', { n: num(anomalies.by.medium) })}</Badge>
+                  <Badge tone="gray">{t('anLow', { n: num(anomalies.by.low) })}</Badge>
+                </div>
+                <ul className="stack" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                  {anomalies.top.map((a) => (
+                    <li key={a.id} className="stack" style={{ gap: 2, borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+                      <div className="row-wrap" style={{ gap: 6 }}>
+                        <Badge tone={SEV_TONE[a.severity]}>{t(`anKind${a.kind}` as Key)}</Badge>
+                        {a.ref && <span className="mono tiny muted">{a.ref}</span>}
+                      </div>
+                      <span className="small">{a.title}</span>
+                      <span className="tiny muted">{a.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+                {anomalies.total > anomalies.top.length && <span className="tiny muted">{t('anMore', { n: num(anomalies.total - anomalies.top.length) })}</span>}
+              </div>
+            )}
           </CardBody>
         </Card>
       </div>
@@ -779,6 +864,7 @@ export default function DivisionBriefPage() {
           </Field>
         </div>
       </Modal>
+      {corridorDialog}
     </div>
   );
 }

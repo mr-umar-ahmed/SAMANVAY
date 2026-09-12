@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Download, Languages, Moon, Sun } from 'lucide-react';
+import { ArrowRight, Compass, Download, Languages, Moon, Sun } from 'lucide-react';
 import { PORTALS, PORTAL_ORDER } from '../../auth/portals';
 import { LANGS, useLang, useT } from '../../i18n';
 import { common } from '../../i18n/common';
@@ -49,13 +49,16 @@ export default function LandingPage() {
               ? 'हर उपयोगकर्ता का अपना पोर्टल है। रेल कर्मचारी साइन इन करें; यात्री और नागरिक बिना खाते के सूचनाएँ देख सकते हैं और खतरे की रिपोर्ट कर सकते हैं।'
               : 'Every kind of user has their own portal. Railway staff sign in; passengers and citizens can read block advisories and report a track hazard without an account.'}
           </p>
-          {user && (
-            <div className="row mt-lg">
+          <div className="row-wrap mt-lg">
+            {user && (
               <button className="btn btn-primary" onClick={() => nav(PORTALS[user.portal].landing)}>
                 {hi ? `${PORTALS[user.portal].label.hi} पर जाएँ` : `Continue to ${PORTALS[user.portal].label.en}`} <ArrowRight />
               </button>
-            </div>
-          )}
+            )}
+            <Link to="/workflow" className="btn" data-tour="landing-workflow">
+              <Compass /> {hi ? 'कार्य-प्रवाह के 8 चरण देखें' : 'See the 8-step workflow'}
+            </Link>
+          </div>
         </div>
 
         <div className="portal-grid">

@@ -6,10 +6,10 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Copy, FileText, Lock, Play, Printer, ShieldAlert, Square, X } from 'lucide-react';
+import { Check, Copy, FileText, Lock, Play, Printer, Send, ShieldAlert, Square, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import type { ExecItem } from '../../store/useAppStore';
-import { disconnectionNotices, evaluateBlockWindow, workingBlocks, type WorkingBlock } from '../../engine/select';
+import { blocksRunningPastEnd, cautionOrders, dayIndexOf, disconnectionNotices, evaluateBlockWindow, workingBlocks, type WorkingBlock } from '../../engine/select';
 import { toBdmsDemand } from '../../engine/exporter.js';
 import type { Dept } from '../../engine/types';
 import { can } from '../../auth/portals';
@@ -17,10 +17,12 @@ import { usePortal } from '../../app/usePortal';
 import { useT } from '../../i18n';
 import { ArciBar, Badge, Callout, Card, CardBody, CardHead, DataTable, DeptBadge, Drawer, Field, KeyValue, Modal, SectionTitle, StatusBadge, type Column } from '../ui';
 import { AuditTrail, FormSheet, PrintButton, SimLabel } from '../ui/extras';
-import { DEPT_LABEL, classLabel, copyText, dateLong, duration, hhmm, kmRange, lineLabel, timeAgo, toMin } from '../../lib/format';
+import { DEPT_LABEL, classLabel, copyText, dateLong, duration, hhmm, kmRange, lineLabel, nowMinuteIST, timeAgo, toMin } from '../../lib/format';
 import { useDrawerParams } from './useDrawerParams';
 import { blockStrings } from './block/strings';
 import { GrantWithChange } from './block/GrantWithChange';
+import { AlternativeWindows, ConfidenceView } from './PlanExplain';
+import { AckCounts, ExtensionRequests, MessageThread, RunningLateBadge } from './ExecutionDeviations';
 import type { AffectedTrain, BlockTask } from '../../engine/types';
 
 type ObjReason = 'objGang' | 'objMachine' | 'objNotice' | 'objPartner' | 'objOther';
@@ -39,6 +41,7 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
   const forms = useAppStore((s) => s.forms);
   const powerBlocks = useAppStore((s) => s.powerBlocks);
   const executionLog = useAppStore((s) => s.executionLog);
+  const tsrs = useAppStore((s) => s.tsrs);
   const audit = useAppStore((s) => s.audit);
   const corridorId = useAppStore((s) => s.corridorId);
   const concur = useAppStore((s) => s.concur);
@@ -46,6 +49,7 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
   const grant = useAppStore((s) => s.grant);
   const refuse = useAppStore((s) => s.refuse);
   const lock = useAppStore((s) => s.lock);
+  const proposeBlocks = useAppStore((s) => s.proposeBlocks);
   const setIncharge = useAppStore((s) => s.setIncharge);
   const setResources = useAppStore((s) => s.setResources);
   const startPossession = useAppStore((s) => s.startPossession);
@@ -94,6 +98,20 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
   const trail = useMemo(() => (block ? audit.filter((e) => e.entityId === block.id) : []), [audit, block]);
   const payload = useMemo(() => (snapshot && block ? toBdmsDemand(block, snapshot.corridor, snapshot.planStart) : null), [snapshot, block]);
   const payloadJson = useMemo(() => (payload ? JSON.stringify(payload, null, 2) : ''), [payload]);
+  // caution orders tied to this block (T/409 lifted by it, T/409B following its machine works)
+  const blockOrders = useMemo(() => {
+    if (!snapshot || !block) return [];
+    const ids = new Set(block.tasks.map((x) => x.id));
+    return cautionOrders(snapshot, blocks, tsrs, forms, block.day).filter((o) => o.liftingBlockId === block.id || (o.taskId && ids.has(o.taskId)) || o.taskIds?.some((id) => ids.has(id)));
+  }, [snapshot, blocks, tsrs, forms, block]);
+  // past its planned (or extended) end at the wall clock, on the plan day of today
+  const overMin = useMemo(() => {
+    if (!snapshot || !block) return null;
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const r = blocksRunningPastEnd([block], executionLog, nowMinuteIST(), dayIndexOf(today, snapshot.planStart));
+    return r[0]?.overMin ?? null;
+  }, [snapshot, block, executionLog]);
 
   if (!snapshot || !block || !rules || !evaluation) return null;
 
@@ -110,8 +128,15 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
   const canExecute = can(user, 'execute');
   const canPlan = can(user, 'plan');
   const missingDepts = block.departments.filter((d) => !approval?.concur[d]);
-  const grantable = block.status === 'PROPOSED' && block.concurred && canGrant;
-  const lockable = block.status === 'GRANTED' && canLock;
+  const state = block.state;
+  const stateWord = t(`st_${state}` as const);
+  const concurOpen = state === 'PROPOSED' || state === 'CONCURRED';
+  const grantable = state === 'CONCURRED' && canGrant;
+  const refusable = concurOpen && canGrant;
+  const lockable = state === 'GRANTED' && canLock;
+  const sendable = state === 'DRAFT' || state === 'REFUSED';
+  const isControl = portal === 'control' || canGrant;
+  const topTask = block.tasks.reduce<BlockTask | null>((a, x) => (!a || x.arci > a.arci ? x : a), null);
   const kindLabel = block.kind === 'POWER' ? t('kindPower') : block.kind === 'TRAFFIC + POWER' ? t('kindTrafficPower') : block.kind === 'DISCONNECTION' ? t('kindDisconnection') : t('kindTraffic');
   const formsRoute = portal === 'control' ? '/app/control/caution' : portal === 'tms' || portal === 'smms' || portal === 'tdms' ? `/app/${portal}/forms` : null;
   const overrideMachine = approval?.resources?.machineId;
@@ -133,16 +158,15 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
   const saveIncharge = () => {
     const name = inchargeDraft.trim();
     if (!name) return;
-    setIncharge(block.id, name);
-    toast({ title: t('inchargeSaved'), body: `${block.id} · ${name}`, tone: 'ok' });
+    if (setIncharge(block.id, name)) toast({ title: t('inchargeSaved'), body: `${block.id} · ${name}`, tone: 'ok' });
   };
   const saveResources = () => {
-    setResources(block.id, { machineId: machineDraft || undefined, crewId: crewDraft || undefined });
+    if (!setResources(block.id, { machineId: machineDraft || undefined, crewId: crewDraft || undefined })) return;
     toast({ title: t('resourcesSaved'), body: [machineDraft && machineLabel(machineDraft), crewDraft && crewLabel(crewDraft)].filter(Boolean).join(' · ') || t('keepPlanned'), tone: 'ok' });
   };
   const doConcur = () => {
     if (!concurFor) return;
-    concur(block.id, concurFor, concurNote.trim() || undefined);
+    if (!concur(block.id, concurFor, concurNote.trim() || undefined)) return;
     toast({ title: t('concurDone', { dept: DEPT_LABEL[concurFor].short }), body: block.id, tone: 'ok' });
     setConcurFor(null);
     setConcurNote('');
@@ -151,43 +175,44 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
     if (!objectFor) return;
     const reason = `${t(objReason)}${objDetail.trim() ? ` — ${objDetail.trim()}` : ''}`;
     if (objReason === 'objOther' && !objDetail.trim()) return;
-    object(block.id, objectFor, reason);
+    if (!object(block.id, objectFor, reason)) return;
     toast({ title: t('objectDone', { dept: DEPT_LABEL[objectFor].short }), body: reason, tone: 'warn' });
     setObjectFor(null);
     setObjDetail('');
   };
   const doGrant = () => {
-    grant(block.id);
-    toast({ title: t('grantDone', { id: block.id }), body: `${block.sectionText} · ${hhmm(block.start)}–${hhmm(block.end)}`, tone: 'ok' });
+    if (grant(block.id)) toast({ title: t('grantDone', { id: block.id }), body: `${block.sectionText} · ${hhmm(block.start)}–${hhmm(block.end)}`, tone: 'ok' });
   };
   const doGrantChange = (start: number, end: number) => {
-    grant(block.id, { start, end });
+    if (!grant(block.id, { start, end })) return;
     toast({ title: t('grantChangeDone', { id: block.id }), body: `${hhmm(start)}–${hhmm(end)} · ${duration(end - start)}`, tone: 'ok' });
     setChangeOpen(false);
   };
   const doRefuse = () => {
     const reason = `${t(refReason)}${refDetail.trim() ? ` — ${refDetail.trim()}` : ''}`;
     if (refReason === 'refOther' && !refDetail.trim()) return;
-    refuse(block.id, reason);
+    if (!refuse(block.id, reason)) return;
     toast({ title: t('refuseDone', { id: block.id }), body: reason, tone: 'crit' });
     setRefuseOpen(false);
     setRefDetail('');
   };
   const doLock = () => {
-    lock(block.id);
-    toast({ title: t('lockDone', { id: block.id }), body: block.sectionText, tone: 'ok' });
+    if (lock(block.id)) toast({ title: t('lockDone', { id: block.id }), body: block.sectionText, tone: 'ok' });
+  };
+  const doSend = () => {
+    if (proposeBlocks([block.id]) === 1) toast({ title: t('sentToast', { id: block.id }), body: `${block.sectionText} · ${hhmm(block.start)}–${hhmm(block.end)}`, tone: 'ok' });
   };
   const execItems = (): ExecItem[] => block.tasks.map((x) => ({ taskId: x.id, label: x.label, dept: x.dept, workType: x.workType, plannedMin: x.end - x.start, done: false }));
   const doStart = () => {
     const actualStart = toMin(startTime || hhmm(block.start));
-    startPossession({ blockId: block.id, corridorId, date: block.date, sectionText: block.sectionText, line: block.line, plannedStart: block.start, plannedEnd: block.end, plannedSpanMin: block.spanMin, items: execItems(), actualStart, source: portal === 'control' ? 'control' : 'field' });
+    if (!startPossession({ blockId: block.id, corridorId, date: block.date, sectionText: block.sectionText, line: block.line, plannedStart: block.start, plannedEnd: block.end, plannedSpanMin: block.spanMin, items: execItems(), actualStart, source: portal === 'control' ? 'control' : 'field' })) return;
     toast({ title: t('startDone', { id: block.id }), body: hhmm(actualStart), tone: 'ok' });
     setStartOpen(false);
   };
   const doClear = () => {
     const actualEnd = toMin(clearTime || hhmm(block.end));
     const speed = speedLift.trim() === '' ? null : Number(speedLift);
-    clearPossession(block.id, { actualEnd, overrunCause: overrun.trim() || undefined, speedOnLifting: Number.isFinite(speed) ? speed : null, source: portal === 'control' ? 'control' : 'field' });
+    if (!clearPossession(block.id, { actualEnd, overrunCause: overrun.trim() || undefined, speedOnLifting: Number.isFinite(speed) ? speed : null, source: portal === 'control' ? 'control' : 'field' })) return;
     toast({ title: t('clearDone', { id: block.id }), body: hhmm(actualEnd), tone: 'ok' });
     setClearOpen(false);
   };
@@ -248,6 +273,7 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
             {block.premiumConflicts > 0 && <Badge tone="crit" icon={<ShieldAlert />}>{t('premiumConflict')}</Badge>}
             <Badge tone="outline">{kindLabel}</Badge>
             {block.overridden && <Badge tone="warn">{t('overridden')}</Badge>}
+            {overMin !== null && <RunningLateBadge overMin={overMin} />}
           </>
         }
       >
@@ -256,11 +282,11 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
           <KeyValue
             items={[
               [t('date'), dateLong(block.date)],
-              [t('window'), <span className="mono num">{hhmm(block.start)}–{hhmm(block.end)} · {duration(block.spanMin)}</span>],
+              [t('window'), <span key="w" className="mono num">{hhmm(block.start)}–{hhmm(block.end)} · {duration(block.spanMin)}</span>],
               [t('sections'), `${block.sectionLabels.join(' / ')} · ${kmRange(block.startKm, block.endKm)}`],
               ...(block.powerIsolation
                 ? [[t('powerIsolation'), (
-                    <div>
+                    <div key="p">
                       <div>{block.powerIsolation}</div>
                       {block.oheSections.length > 0 && (
                         <div className="tiny muted">{t('elementarySections')}: {block.oheSections.map((o) => `${o.label} (${o.spFrom} → ${o.spTo})`).join(', ')}</div>
@@ -269,26 +295,26 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
                   )] as [React.ReactNode, React.ReactNode]]
                 : []),
               [t('machines'), (
-                <span className="row-wrap">
+                <span key="m" className="row-wrap">
                   {overrideMachine && <Badge tone="warn">{machineLabel(overrideMachine)} · {t('override')}</Badge>}
                   {block.machines.length ? block.machines.map((m) => <Badge key={m} tone="gray">{machineLabel(m)}</Badge>) : <span className="muted">{t('noMachine')}</span>}
                   <SimLabel kind="seededFeed" system={block.departments[0]} seed={26027} short />
                 </span>
               )],
               [t('gangs'), (
-                <span className="row-wrap">
+                <span key="g" className="row-wrap">
                   {overrideCrew && <Badge tone="warn">{crewLabel(overrideCrew)} · {t('override')}</Badge>}
                   {block.crews.length ? block.crews.map((c) => <Badge key={c} tone="gray">{crewLabel(c)}</Badge>) : <span className="muted">{t('noGang')}</span>}
                 </span>
               )],
               [t('incharge'), (
                 canExecute || canPlan ? (
-                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                  <div key="i" className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                     <input className="input" style={{ maxWidth: 260 }} value={inchargeDraft} placeholder={t('inchargePlaceholder')} onChange={(e) => setInchargeDraft(e.target.value)} />
                     <button className="btn btn-sm" disabled={!inchargeDraft.trim() || inchargeDraft.trim() === (approval?.incharge ?? '')} onClick={saveIncharge}>{t('save')}</button>
                   </div>
                 ) : (
-                  <span title={t('inchargeHint')}>{approval?.incharge ?? <span className="muted">{t('inchargeNone')}</span>}</span>
+                  <span key="i" title={t('inchargeHint')}>{approval?.incharge ?? <span className="muted">{t('inchargeNone')}</span>}</span>
                 )
               )],
             ]}
@@ -359,6 +385,25 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
             )}
           </div>
 
+          {/* 5b ── confidence and alternative windows */}
+          <div className="stack">
+            <SectionTitle right={<SimLabel kind="model" short />}>{t('confidence')}</SectionTitle>
+            <ConfidenceView confidence={block.confidence} />
+          </div>
+          <div className="stack" data-tour="block-alternatives">
+            <SectionTitle>{t('alternatives')}</SectionTitle>
+            <AlternativeWindows
+              planStart={snapshot.planStart}
+              alternatives={block.alternatives}
+              blockTasks={block.tasks.map((x) => ({ id: x.id, start: x.start, end: x.end }))}
+              from={{ start: block.start }}
+              taskId={topTask?.id ?? null}
+              fixed={block.fixed}
+              onGrantWithChange={isControl ? () => setChangeOpen(true) : undefined}
+              grantable={grantable}
+            />
+          </div>
+
           {/* 6 ── forms & isolation */}
           <div className="stack">
             <SectionTitle right={formsRoute ? <Link className="btn btn-sm btn-ghost" to={formsRoute}><FileText /> {portal === 'control' ? t('openCaution') : t('openForms')}</Link> : undefined}>{t('forms')}</SectionTitle>
@@ -396,7 +441,8 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
               {block.departments.map((d) => {
                 const c = approval?.concur[d];
                 const objs = approval?.objections.filter((o) => o.dept === d) ?? [];
-                const may = can(user, `concur:${d}` as const) && block.status === 'PROPOSED';
+                const own = can(user, `concur:${d}` as const);
+                const may = (own || canPlan) && concurOpen;
                 return (
                   <Card key={d} pastel={c ? 'green' : objs.length ? 'pink' : 'gray'}>
                     <CardBody tight>
@@ -411,26 +457,26 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
                       ))}
                       <div className="row-wrap mt">
                         <button className="btn btn-sm btn-ok" disabled={!may || !!c} title={!may ? t('cannotConcur', { officer: DEPT_LABEL[d].officer, dept: DEPT_LABEL[d].short }) : c ? t('alreadyConcurred') : undefined} onClick={() => setConcurFor(d)}>
-                          <Check /> {t('concur')}
+                          <Check /> {own ? t('concur') : t('onBehalf')}
                         </button>
-                        <button className="btn btn-sm" disabled={!may} title={!may ? t('cannotConcur', { officer: DEPT_LABEL[d].officer, dept: DEPT_LABEL[d].short }) : undefined} onClick={() => setObjectFor(d)}>
+                        <button className="btn btn-sm" disabled={!own || !concurOpen} title={!own ? t('cannotConcur', { officer: DEPT_LABEL[d].officer, dept: DEPT_LABEL[d].short }) : undefined} onClick={() => setObjectFor(d)}>
                           <X /> {t('object')}
                         </button>
                       </div>
-                      {!may && <div className="tiny muted mt">{block.status !== 'PROPOSED' ? t('grantHintStatus', { status: block.status.toLowerCase() }) : t('cannotConcur', { officer: DEPT_LABEL[d].officer, dept: DEPT_LABEL[d].short })}</div>}
+                      {!may && <div className="tiny muted mt">{!concurOpen ? (state === 'DRAFT' ? t('notSentHint') : t('concurStateHint', { state: stateWord })) : t('cannotConcur', { officer: DEPT_LABEL[d].officer, dept: DEPT_LABEL[d].short })}</div>}
                     </CardBody>
                   </Card>
                 );
               })}
             </div>
 
-            <Card pastel={block.status === 'GRANTED' || block.status === 'LOCKED' ? 'green' : block.status === 'REFUSED' ? 'pink' : 'lavender'}>
-              <CardHead title={t('grantCard')} right={<StatusBadge status={block.status} />} />
+            <Card pastel={state === 'GRANTED' || state === 'LOCKED' ? 'green' : state === 'REFUSED' ? 'pink' : 'lavender'}>
+              <CardHead title={t('grantCard')} right={<Badge tone={state === 'GRANTED' ? 'ok' : state === 'LOCKED' ? 'info' : state === 'REFUSED' ? 'crit' : state === 'CONCURRED' ? 'blue' : state === 'DRAFT' ? 'gray' : 'warn'}>{stateWord}</Badge>} />
               <CardBody tight>
                 {approval?.grantedAt && <div className="small">{t('grantedAt', { by: approval.grantedBy ?? '', when: timeAgo(approval.grantedAt) })}</div>}
                 {approval?.lockedAt && <div className="small">{t('lockedAt', { by: approval.lockedBy ?? '', when: timeAgo(approval.lockedAt) })}</div>}
-                {approval?.refusal && block.status === 'REFUSED' && <div className="small" style={{ color: 'var(--crit)' }}>{t('refusedAt', { by: approval.refusal.by, when: timeAgo(approval.refusal.at), reason: approval.refusal.reason })}</div>}
-                {t351Pending && block.status === 'PROPOSED' && (
+                {approval?.refusal && state === 'REFUSED' && <div className="small" style={{ color: 'var(--crit)' }}>{t('refusedAt', { by: approval.refusal.by, when: timeAgo(approval.refusal.at), reason: approval.refusal.reason })}</div>}
+                {t351Pending && concurOpen && (
                   <Callout tone="warn">
                     <div className="strong">{t('t351Warning')}</div>
                     {grantable && (
@@ -442,25 +488,38 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
                   </Callout>
                 )}
                 <div className="row-wrap mt">
-                  <button className="btn btn-sm btn-primary" disabled={!grantable || (t351Pending && !t351Ack)} onClick={doGrant}>
-                    <Check /> {t('grant')}
-                  </button>
-                  <button className="btn btn-sm" disabled={!grantable} onClick={() => setChangeOpen(true)}>{t('grantWithChange')}</button>
-                  <button className="btn btn-sm btn-danger" disabled={!canGrant || block.status !== 'PROPOSED'} onClick={() => setRefuseOpen(true)}>{t('refuse')}</button>
-                  <button className="btn btn-sm btn-dark" disabled={!lockable} onClick={doLock}>
-                    <Lock /> {t('lockCoa')}
-                  </button>
+                  {canPlan && sendable && (
+                    <button className="btn btn-sm btn-primary" onClick={doSend}>
+                      <Send /> {state === 'REFUSED' ? t('sendAgain') : t('sendToControl')}
+                    </button>
+                  )}
+                  {isControl && (
+                    <>
+                      <button className="btn btn-sm btn-primary" disabled={!grantable || (t351Pending && !t351Ack)} title={!grantable ? t('grantNeedsConcur') : undefined} onClick={doGrant}>
+                        <Check /> {t('grant')}
+                      </button>
+                      <button className="btn btn-sm" disabled={!grantable} onClick={() => setChangeOpen(true)}>{t('grantWithChange')}</button>
+                      <button className="btn btn-sm btn-danger" disabled={!refusable} onClick={() => setRefuseOpen(true)}>{t('refuse')}</button>
+                      <button className="btn btn-sm btn-dark" disabled={!lockable} onClick={doLock}>
+                        <Lock /> {t('lockCoa')}
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="tiny muted mt">
-                  {block.status !== 'PROPOSED'
-                    ? block.status === 'GRANTED'
-                      ? canLock ? '' : t('lockHintRole')
-                      : t('grantHintStatus', { status: block.status.toLowerCase() })
-                    : !canGrant
-                      ? t('grantHintRole')
-                      : missingDepts.length
-                        ? t('grantHintConcur', { depts: missingDepts.map((d) => DEPT_LABEL[d].short).join(', ') })
-                        : t('lockHintStatus')}
+                  {state === 'DRAFT'
+                    ? canPlan ? '' : t('notSentHint')
+                    : state === 'REFUSED'
+                      ? canPlan ? '' : t('grantHintStatus', { status: stateWord })
+                      : state === 'PROPOSED'
+                        ? !canGrant && isControl
+                          ? t('grantHintRole')
+                          : t('grantHintConcur', { depts: missingDepts.map((d) => DEPT_LABEL[d].short).join(', ') })
+                        : state === 'CONCURRED'
+                          ? canGrant ? t('lockHintStatus') : t('grantHintRole')
+                          : state === 'GRANTED'
+                            ? canLock ? '' : t('lockHintRole')
+                            : t('grantHintStatus', { status: stateWord })}
                 </div>
               </CardBody>
             </Card>
@@ -472,25 +531,38 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
             {execRec ? (
               <KeyValue
                 items={[
-                  [t('status'), <StatusBadge status={execRec.status} />],
-                  [t('actualStart'), <span className="mono num">{execRec.actualStart !== undefined ? hhmm(execRec.actualStart) : '—'}</span>],
-                  [t('actualEnd'), <span className="mono num">{execRec.actualEnd !== undefined ? hhmm(execRec.actualEnd) : '—'}</span>],
-                  [t('itemsDone'), <span className="num">{execRec.items.filter((i) => i.done).length} / {execRec.items.length}</span>],
+                  [t('status'), <StatusBadge key="s" status={execRec.status} />],
+                  [t('actualStart'), <span key="a" className="mono num">{execRec.actualStart !== undefined ? hhmm(execRec.actualStart) : '—'}</span>],
+                  [t('actualEnd'), <span key="e" className="mono num">{execRec.actualEnd !== undefined ? hhmm(execRec.actualEnd) : '—'}</span>],
+                  [t('itemsDone'), <span key="d" className="num">{execRec.items.filter((i) => i.done).length} / {execRec.items.length}</span>],
                 ]}
               />
             ) : (
               <div className="small muted">{t('noExecution')}</div>
             )}
             <div className="row-wrap">
-              <button className="btn btn-sm" disabled={!canExecute || !!execRec || (block.status !== 'GRANTED' && block.status !== 'LOCKED')} onClick={() => setStartOpen(true)}>
+              <button className="btn btn-sm" disabled={!canExecute || !!execRec || (state !== 'GRANTED' && state !== 'LOCKED')} onClick={() => setStartOpen(true)}>
                 <Play /> {t('recordStart')}
               </button>
               <button className="btn btn-sm" disabled={!canExecute || !execRec || execRec.status !== 'IN_PROGRESS'} onClick={() => setClearOpen(true)}>
                 <Square /> {t('recordClear')}
               </button>
-              {!canExecute ? <span className="tiny muted">{t('executeHint')}</span> : block.status !== 'GRANTED' && block.status !== 'LOCKED' && !execRec ? <span className="tiny muted">{t('executeHintStatus')}</span> : null}
+              {!canExecute ? <span className="tiny muted">{t('executeHint')}</span> : state !== 'GRANTED' && state !== 'LOCKED' && !execRec ? <span className="tiny muted">{t('executeHintStatus')}</span> : null}
             </div>
           </div>
+
+          {/* 8b ── execution deviations (Control) */}
+          {isControl && (
+            <div className="stack" data-tour="block-deviations">
+              <SectionTitle right={overMin !== null ? <Badge tone="crit">{t('lateNow')}</Badge> : undefined}>{t('deviations')}</SectionTitle>
+              <div className="small strong">{t('extensions')}</div>
+              <ExtensionRequests snapshot={snapshot} blocks={blocks} blockId={block.id} showDecided />
+              <div className="small strong">{t('messages')}</div>
+              <MessageThread blockId={block.id} />
+              <div className="small strong">{t('acks')}</div>
+              <AckCounts orders={blockOrders} />
+            </div>
+          )}
 
           {/* 9 ── audit trail */}
           <div className="stack">
@@ -523,11 +595,11 @@ export function BlockDrawer({ blockId, onClose }: { blockId: string | null; onCl
         footer={
           <div className="row-wrap" style={{ width: '100%', justifyContent: 'flex-end' }}>
             <button className="btn" onClick={() => setConcurFor(null)}>{t('cancel')}</button>
-            <button className="btn btn-ok" onClick={doConcur}><Check /> {t('concur')}</button>
+            <button className="btn btn-ok" disabled={!!concurFor && !can(user, `concur:${concurFor}` as const) && !concurNote.trim()} onClick={doConcur}><Check /> {t('concur')}</button>
           </div>
         }
       >
-        <Field label={t('concurNote')}>
+        <Field label={t('concurNote')} error={concurFor && !can(user, `concur:${concurFor}` as const) && !concurNote.trim() ? t('onBehalfNoteRequired', { dept: DEPT_LABEL[concurFor].short }) : undefined}>
           <textarea className="textarea" rows={3} value={concurNote} placeholder={t('concurNotePlaceholder')} onChange={(e) => setConcurNote(e.target.value)} />
         </Field>
       </Modal>
@@ -641,7 +713,7 @@ function RequisitionSheet({ block, payload, corridorCode, machineLabel, crewLabe
     <div className="stack" style={{ color: '#111' }}>
       <KeyValue
         items={[
-          [t('reference'), <span className="mono">{block.id}</span>],
+          [t('reference'), <span key="ref" className="mono">{block.id}</span>],
           [t('demandType'), String(payload.demandType ?? '')],
           [t('corridor'), corridorCode],
           [t('sections'), `${block.sectionText} · ${kmRange(block.startKm, block.endKm)}`],

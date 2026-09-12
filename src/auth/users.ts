@@ -46,6 +46,7 @@ async function digest(s: string): Promise<string> {
 }
 
 export const FIELD_INVITE_CODE = 'FIELD2026';
+/** Self sign-up is limited to field roles; officers (ADEN, JE, SSE, Sr. DEN …) are created by the administrator. */
 export const SELF_SIGNUP_ROLES: RoleId[] = ['GANG_INCHARGE', 'LOCO_PILOT'];
 
 export type SignupInput = {
@@ -62,6 +63,7 @@ export type SignupInput = {
 export async function signup(input: SignupInput): Promise<{ ok: true; user: SessionUser } | { ok: false; error: 'exists' | 'invalid' | 'invalid_role' | 'invalid_code' }> {
   const email = input.email.trim().toLowerCase();
   if (!email || !input.password || input.password.length < 4 || !input.name.trim()) return { ok: false, error: 'invalid' };
+  if (!ROLES[input.role]) return { ok: false, error: 'invalid_role' };
 
   if (input.isSelfSignup) {
     if (!SELF_SIGNUP_ROLES.includes(input.role)) return { ok: false, error: 'invalid_role' };
@@ -93,6 +95,7 @@ export async function login(emailRaw: string, password: string): Promise<Session
   if (!stored) return null;
   if (stored.passwordHash !== (await digest(password))) return null;
   const role = ROLES[stored.role];
+  if (!role) return null;
   return { id: stored.id, name: stored.name, email: stored.email, role: stored.role, portal: role.portal, designation: stored.designation, division: stored.division, dept: role.dept, demo: false };
 }
 

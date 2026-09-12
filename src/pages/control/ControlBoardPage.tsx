@@ -8,27 +8,32 @@
  */
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Flame, Lock } from 'lucide-react';
+import { Clock, Flame, Lock, MessageSquare } from 'lucide-react';
 import { useAppStore, type ExecRecord } from '../../store/useAppStore';
 import { can } from '../../auth/portals';
 import { CORRIDORS } from '../../engine/corridors.js';
 import { searchTrains } from '../../engine/trainLookup.js';
-import { blocksForDay, blocksMetByTrain, cautionOrders, disconnectionNotices, livePositions, workingBlocks, type WorkingBlock } from '../../engine/select';
+import { blocksForDay, blocksMetByTrain, cautionOrders, disconnectionNotices, livePositions, messagesForBlock, workingBlocks, type WorkingBlock } from '../../engine/select';
 import type { AffectedTrain, Corridor, Snapshot, Train } from '../../engine/types';
 import { useT } from '../../i18n';
 import { Badge, Callout, Card, CardBody, CardHead, DataTable, DeptBadge, EmptyState, Field, Modal, PageHeader, PlanPending, Segmented, StatTile, StatusBadge, type Column } from '../../components/ui';
 import { ChipGroup, FormSheet, PrintButton, SimLabel, TimeScrubber } from '../../components/ui/extras';
 import { StringDiagram, freeWindowsForDay, type StringDiagramLayers, type TsrBand } from '../../components/viz/StringDiagram';
-import { CorridorMap } from '../../components/viz/CorridorMap';
+import { CorridorMap, type MapLayers } from '../../components/viz/CorridorMap';
 import { BlockDrawer } from '../../components/domain/BlockDrawer';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
 import { ReportDrawer } from '../../components/domain/ReportDrawer';
 import { GrantWithChange } from '../../components/domain/block/GrantWithChange';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
+import { ConflictsPanel } from '../../components/domain/ConflictsPanel';
+import { AckCounts, ExtensionRequests, MessageThread, RunningLateBadge, RunningPastEndList } from '../../components/domain/ExecutionDeviations';
+import { useCorridorSwitch, useRunningPastEnd } from '../../components/domain/planHooks';
 import { DEPT_CLASS, DEPT_LABEL, addDaysIso, classLabel, dateLabel, duration, hhmm, kmRange, lineLabel, nowMinuteIST, toMin } from '../../lib/format';
 
 type View = 'board' | 'programme' | 'map';
 type Layer = 'passenger' | 'goods' | 'freeWindows' | 'baseline';
+type MapLayer = 'blocks' | 'trains' | 'incidents' | 'tasks' | 'ohe' | 'depots' | 'signals';
+const MAP_LAYERS: MapLayer[] = ['blocks', 'trains', 'incidents', 'tasks', 'ohe', 'depots', 'signals'];
 type RefuseReason = 'reasonTraffic' | 'reasonFailure' | 'reasonGang' | 'reasonT351' | 'reasonMachine' | 'reasonOther';
 const REFUSE_REASONS: RefuseReason[] = ['reasonTraffic', 'reasonFailure', 'reasonGang', 'reasonT351', 'reasonMachine', 'reasonOther'];
 
@@ -197,6 +202,28 @@ const strings = {
     bs_LOCKED: 'Locked',
     grantedToast: 'Granted {section} {window}',
     grantedChangeToast: 'Granted with change',
+    notSent: 'Not sent by the planning cell yet — nothing to grant.',
+    devTitle: 'Execution deviations',
+    devSub: 'Extension requests from site, possessions past their planned end at the control clock, site messages and loco pilot acknowledgements.',
+    devExt: 'Extension requests',
+    devLate: 'Running past planned end',
+    devMsgs: 'Site messages',
+    devAcks: 'Loco pilot acknowledgements · {date}',
+    devNoMsgs: 'No site message on the blocks of {date}.',
+    msgBadge: '{n} message(s)',
+    extBadge: 'Extension asked',
+    clearOverrun: 'Overrun cause',
+    clearOverrunHint: 'Planned end {end}. Kept in the execution log; the duration model learns from it on the next re-plan.',
+    clearOverrunPlaceholder: 'e.g. rail joint took longer, late line block, machine fault',
+    mapLayers: 'Layers',
+    ml_blocks: 'Blocks',
+    ml_trains: 'Trains',
+    ml_incidents: 'Hazards',
+    ml_tasks: 'Work sites',
+    ml_ohe: 'OHE / TSS',
+    ml_depots: 'Depots',
+    ml_signals: 'Signals, points & LC gates',
+    signalsNote: 'Signal, point, track-circuit and LC positions are the corridor twin’s typical placements, not a surveyed interlocking plan.',
   },
   hi: {
     title: 'नियंत्रण बोर्ड',
@@ -358,6 +385,28 @@ const strings = {
     bs_LOCKED: 'लॉक',
     grantedToast: '{section} {window} प्रदत्त',
     grantedChangeToast: 'बदलाव के साथ प्रदत्त',
+    notSent: 'योजना प्रकोष्ठ ने अभी नहीं भेजा — प्रदान करने को कुछ नहीं।',
+    devTitle: 'निष्पादन विचलन',
+    devSub: 'साइट से विस्तार अनुरोध, नियंत्रण घड़ी पर नियोजित समाप्ति से आगे चल रहे पज़ेशन, साइट संदेश और लोको पायलट पावती।',
+    devExt: 'विस्तार अनुरोध',
+    devLate: 'नियोजित समाप्ति के बाद भी जारी',
+    devMsgs: 'साइट संदेश',
+    devAcks: 'लोको पायलट पावती · {date}',
+    devNoMsgs: '{date} के block पर साइट से कोई संदेश नहीं।',
+    msgBadge: '{n} संदेश',
+    extBadge: 'विस्तार माँगा',
+    clearOverrun: 'ओवररन कारण',
+    clearOverrunHint: 'नियोजित समाप्ति {end}। निष्पादन लॉग में दर्ज; अगली पुनः योजना पर अवधि मॉडल इससे सीखता है।',
+    clearOverrunPlaceholder: 'जैसे रेल जोड़ में अधिक समय, देर से लाइन block, मशीन खराबी',
+    mapLayers: 'परतें',
+    ml_blocks: 'Block',
+    ml_trains: 'ट्रेनें',
+    ml_incidents: 'खतरे',
+    ml_tasks: 'कार्य स्थल',
+    ml_ohe: 'OHE / TSS',
+    ml_depots: 'डिपो',
+    ml_signals: 'सिग्नल, पॉइंट व LC गेट',
+    signalsNote: 'सिग्नल, पॉइंट, ट्रैक-सर्किट और LC की स्थितियाँ कॉरिडोर ट्विन की सामान्य स्थापना हैं, सर्वेक्षित इंटरलॉकिंग योजना नहीं।',
   },
 } as const;
 
@@ -394,13 +443,15 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
   const handoverNotes = useAppStore((s) => s.handoverNotes);
   const corridorId = useAppStore((s) => s.corridorId);
   const grant = useAppStore((s) => s.grant);
-  const lock = useAppStore((s) => s.lock);
+  const lockBlocks = useAppStore((s) => s.lockBlocks);
   const refuse = useAppStore((s) => s.refuse);
+  const extensions = useAppStore((s) => s.extensions);
+  const messages = useAppStore((s) => s.messages);
   const clearPossession = useAppStore((s) => s.clearPossession);
   const addTsr = useAppStore((s) => s.addTsr);
   const setHandoverNote = useAppStore((s) => s.setHandoverNote);
-  const setCorridor = useAppStore((s) => s.setCorridor);
   const toast = useAppStore((s) => s.toast);
+  const { request: requestCorridor, dialog: corridorDialog } = useCorridorSwitch();
 
   const [minute, setMinute] = useState(() => nowMinuteIST());
   const [playing, setPlaying] = useState(false);
@@ -411,6 +462,7 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
   const [t351Block, setT351Block] = useState<WorkingBlock | null>(null);
   const [trainQuery, setTrainQuery] = useState('');
   const [trainNo, setTrainNo] = useState<string | null>(null);
+  const [mapLayers, setMapLayers] = useState<MapLayer[]>(['blocks', 'trains', 'incidents']);
 
   const canGrant = can(user, 'grant');
   const canLock = can(user, 'lock');
@@ -428,7 +480,7 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
   const dayAll = useMemo(() => blocksForDay(allWorking, day).slice().sort((a, b) => a.start - b.start), [allWorking, day]);
   const dayBlocks = useMemo(() => dayAll.filter((b) => b.status !== 'REFUSED'), [dayAll]);
   const refusedCount = dayAll.length - dayBlocks.length;
-  const d1Granted = useMemo(() => blocksForDay(allWorking, 1).filter((b) => b.status === 'GRANTED'), [allWorking]);
+  const d1Granted = useMemo(() => blocksForDay(allWorking, 1).filter((b) => b.state === 'GRANTED'), [allWorking]);
 
   const nextBlock = useMemo(() => allWorking.filter((b) => b.day > day && b.status !== 'REFUSED').sort((a, b) => a.day - b.day || a.start - b.start)[0] ?? null, [allWorking, day]);
 
@@ -474,14 +526,27 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
   );
 
   const held = useMemo(() => dayBlocks.flatMap((b) => b.affectedTrains.map((a) => ({ a, b }))).sort((x, y) => y.a.delayMin - x.a.delayMin), [dayBlocks]);
+
+  /* execution deviations: past planned end at the control clock, pending extensions, site messages, acknowledgements */
+  const late = useRunningPastEnd(allWorking, minute, day);
+  const lateById = useMemo(() => new Map(late.map((r) => [r.block.id, r.overMin])), [late]);
+  const pendingExt = useMemo(() => new Set(extensions.filter((e) => e.status === 'PENDING').map((e) => e.blockId)), [extensions]);
+  const msgBlocks = useMemo(() => dayBlocks.filter((b) => messagesForBlock(messages, b.id).length > 0), [dayBlocks, messages]);
+  const msgCount = (id: string) => messagesForBlock(messages, id).length;
+  const dayOrders = useMemo(() => cautionOrders(snapshot, allWorking, tsrs, forms, day).filter((o) => o.status === 'ISSUED' || o.status === 'ACKNOWLEDGED'), [snapshot, allWorking, tsrs, forms, day]);
+  const mapTasks = useMemo(() => {
+    const ids = new Set(dayBlocks.flatMap((b) => b.tasks.map((x) => x.id)));
+    return snapshot.tasks.filter((x) => ids.has(x.id));
+  }, [snapshot, dayBlocks]);
+  const mapLayerFlags = useMemo<MapLayers>(() => Object.fromEntries(MAP_LAYERS.map((k) => [k, mapLayers.includes(k)])) as MapLayers, [mapLayers]);
   const corridorReports = useMemo(() => reports.filter((r) => r.corridorId === corridor.id), [reports, corridor.id]);
 
   /* ── stats ─────────────────────────────────────────────── */
-  const grantedCount = dayBlocks.filter((b) => b.status === 'GRANTED' || b.status === 'LOCKED').length;
-  const readyCount = dayBlocks.filter((b) => b.status === 'PROPOSED' && b.concurred).length;
-  const waitingCount = dayBlocks.filter((b) => b.status === 'PROPOSED' && !b.concurred).length;
+  const grantedCount = dayBlocks.filter((b) => b.state === 'GRANTED' || b.state === 'LOCKED').length;
+  const readyCount = dayBlocks.filter((b) => b.state === 'CONCURRED').length;
+  const waitingCount = dayBlocks.filter((b) => b.state === 'PROPOSED').length;
   const inProgressCount = dayBlocks.filter((b) => execFor.get(b.id)?.status === 'IN_PROGRESS').length;
-  const toClearCount = dayBlocks.filter((b) => (b.status === 'GRANTED' || b.status === 'LOCKED') && !isCleared(execFor.get(b.id))).length;
+  const toClearCount = dayBlocks.filter((b) => (b.state === 'GRANTED' || b.state === 'LOCKED') && !isCleared(execFor.get(b.id))).length;
   const worksCount = dayBlocks.reduce((a, b) => a + b.tasks.length, 0);
   const regulatedCount = dayBlocks.reduce((a, b) => a + b.affectedTrains.length, 0);
   const weightedMin = dayBlocks.reduce((a, b) => a + b.weightedDelayMin, 0);
@@ -490,39 +555,33 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
 
   /* ── actions ───────────────────────────────────────────── */
   const grantNow = (b: WorkingBlock) => {
-    grant(b.id);
-    toast({ title: t('grantedToast', { section: b.sectionText, window: win(b) }), body: `${b.id} · ${duration(b.spanMin)}`, tone: 'ok' });
+    if (grant(b.id)) toast({ title: t('grantedToast', { section: b.sectionText, window: win(b) }), body: `${b.id} · ${duration(b.spanMin)}`, tone: 'ok' });
   };
   const doGrant = (b: WorkingBlock) => {
     if (t351Pending.has(b.id)) setT351Block(b);
     else grantNow(b);
   };
   const doGrantChange = (b: WorkingBlock, start: number, end: number) => {
-    grant(b.id, { start, end });
+    if (!grant(b.id, { start, end })) return;
     toast({ title: t('grantedChangeToast'), body: `${b.sectionText} · ${hhmm(start)}–${hhmm(end)} · ${duration(end - start)}`, tone: 'ok' });
     setChangeBlock(null);
   };
   const doRefuse = (b: WorkingBlock, reason: string) => {
-    refuse(b.id, reason);
+    if (!refuse(b.id, reason)) return;
     toast({ title: t('refusedToast', { section: b.sectionText, window: win(b) }), body: reason, tone: 'warn' });
     setRefuseBlock(null);
   };
   const doClear = (b: WorkingBlock, r: ClearResult) => {
+    if (!clearPossession(b.id, { actualEnd: r.actualEnd, overrunCause: r.overrunCause, speedOnLifting: r.tsr ? r.tsr.kmph : null, source: 'control' })) return;
     if (r.tsr) addTsr({ corridorId: corridor.id, line: b.line, fromKm: r.tsr.fromKm, toKm: r.tsr.toKm, kmph: r.tsr.kmph, reason: r.tsr.reason, status: 'IN_FORCE', blockId: b.id });
-    clearPossession(b.id, { actualEnd: r.actualEnd, speedOnLifting: r.tsr ? r.tsr.kmph : null, source: 'control' });
     toast({ title: t('clearedToast', { section: b.sectionText }), body: r.tsr ? t('clearedTsr', { v: r.tsr.kmph, a: r.tsr.fromKm.toFixed(1), b: r.tsr.toKm.toFixed(1) }) : t('clearedFull'), tone: 'ok' });
     setClearBlock(null);
   };
   const doLock = () => {
-    const n = d1Granted.length;
-    for (const b of d1Granted) lock(b.id);
-    toast({ title: t('lockedToast', { n, date: dateLabel(d1Iso) }), tone: 'ok' });
+    const n = lockBlocks(d1Granted.map((b) => b.id));
+    if (n) toast({ title: t('lockedToast', { n, date: dateLabel(d1Iso) }), tone: 'ok' });
   };
-  const changeCorridor = (id: string) => {
-    const c = (CORRIDORS as Corridor[]).find((x) => x.id === id);
-    setCorridor(id);
-    toast({ title: t('corridorChanged', { name: c?.name ?? id }), body: t('corridorChangedBody'), tone: 'info' });
-  };
+  const changeCorridor = (id: string) => requestCorridor(id);
   const setView = (v: View) => nav({ pathname: `/app/control/${v}`, search: location.search }, { replace: true });
 
   const lockHint = !canLock ? t('lockNoCap') : d1Granted.length === 0 ? t('lockNone', { date: dateLabel(d1Iso) }) : t('lockHint', { date: dateLabel(d1Iso) });
@@ -530,10 +589,11 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
   /* ── inline block actions (Tonight list) ────────────────── */
   const blockActions = (b: WorkingBlock) => {
     const ex = execFor.get(b.id);
-    if (b.status === 'PROPOSED') {
+    if (b.state === 'DRAFT') return <span className="tiny muted">{t('notSent')}</span>;
+    if (b.state === 'PROPOSED' || b.state === 'CONCURRED') {
       const missing = b.departments.filter((d) => !b.approval?.concur[d]).map((d) => DEPT_LABEL[d].short);
       const hint = !canGrant ? t('noGrantCap') : missing.length ? t('awaiting', { depts: missing.join(', ') }) : undefined;
-      const ok = canGrant && b.concurred;
+      const ok = canGrant && b.state === 'CONCURRED';
       return (
         <>
           <button className="btn btn-sm btn-primary" disabled={!ok} title={hint} onClick={() => doGrant(b)}>{t('grant')}</button>
@@ -542,7 +602,7 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
         </>
       );
     }
-    if (b.status === 'GRANTED' || b.status === 'LOCKED') {
+    if (b.state === 'GRANTED' || b.state === 'LOCKED') {
       if (isCleared(ex)) return <span className="tiny muted">{ex?.speedOnLifting ? t('clearedSpeed', { time: hhmm(ex.actualEnd ?? b.end), v: ex.speedOnLifting }) : t('cleared', { time: hhmm(ex?.actualEnd ?? b.end) })}</span>;
       const started = ex?.status === 'IN_PROGRESS';
       const hint = !canExecute ? t('noExecCap') : !started ? t('notStarted') : undefined;
@@ -598,7 +658,7 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
     { key: 't351', header: t('colT351'), hideMobile: true, render: (b) => (t351Pending.has(b.id) ? <Badge tone="warn">{t351Text(b)}</Badge> : <span className="small">{t351Text(b)}</span>) },
     { key: 'speed', header: t('colSpeed'), render: (b) => speedAfter(b) },
     { key: 'trains', header: t('colTrains'), num: true, render: (b) => <span className="num">{b.affectedTrains.length}</span> },
-    { key: 'state', header: t('colState'), render: (b) => <StatusBadge status={b.status} /> },
+    { key: 'state', header: t('colState'), render: (b) => <StatusBadge status={b.state} /> },
   ];
 
   /* ── map: selected train ───────────────────────────────── */
@@ -749,7 +809,7 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
                         >
                           <div className="row">
                             <span className="strong small grow truncate">{b.sectionText}</span>
-                            <StatusBadge status={b.status} />
+                            <StatusBadge status={b.state} />
                           </div>
                           <div className="row tiny muted" style={{ marginTop: 4 }}>
                             <span className="mono num">{win(b)} · {duration(b.spanMin)}</span>
@@ -759,10 +819,13 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
                             {b.departments.map((d) => <DeptBadge key={d} dept={d} />)}
                             {b.affectedTrains.length > 0 && <Badge tone="warn">{t('trainsN', { n: b.affectedTrains.length })}</Badge>}
                             {t351Pending.has(b.id) && <Badge tone="crit">{t('t351Pending')}</Badge>}
+                            {lateById.has(b.id) && <RunningLateBadge overMin={lateById.get(b.id)!} />}
+                            {pendingExt.has(b.id) && <Badge tone="warn" icon={<Clock size={12} />}>{t('extBadge')}</Badge>}
+                            {msgCount(b.id) > 0 && <Badge tone="lavender" icon={<MessageSquare size={12} />}>{t('msgBadge', { n: msgCount(b.id) })}</Badge>}
                           </div>
-                          {b.status === 'PROPOSED' && (
+                          {(b.state === 'PROPOSED' || b.state === 'CONCURRED') && (
                             <div className="tiny muted" style={{ marginTop: 4 }}>
-                              {b.concurred ? t('readyToGrant') : t('awaiting', { depts: b.departments.filter((d) => !b.approval?.concur[d]).map((d) => DEPT_LABEL[d].short).join(', ') })}
+                              {b.state === 'CONCURRED' ? t('readyToGrant') : t('awaiting', { depts: b.departments.filter((d) => !b.approval?.concur[d]).map((d) => DEPT_LABEL[d].short).join(', ') })}
                             </div>
                           )}
                           <div className="row-wrap" style={{ gap: 6, marginTop: 8, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
@@ -770,6 +833,35 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
                           </div>
                         </div>
                       ))}
+                </div>
+              </CardBody>
+            </Card>
+
+            <ConflictsPanel snapshot={snapshot} blocks={allWorking} day={day} limit={4} requirements={false} tour="control-conflicts" />
+
+            <Card tour="control-deviations">
+              <CardHead title={t('devTitle')} sub={t('devSub')} right={<SimLabel kind="simClock" short />} />
+              <CardBody>
+                <div className="stack">
+                  <div className="section-title">{t('devLate')}</div>
+                  <RunningPastEndList late={late} minute={minute} />
+                  <div className="section-title">{t('devExt')}</div>
+                  <ExtensionRequests snapshot={snapshot} blocks={allWorking} />
+                  <div className="section-title">{t('devMsgs')}</div>
+                  {msgBlocks.length === 0 ? (
+                    <div className="small muted">{t('devNoMsgs', { date: dateLabel(dayIso) })}</div>
+                  ) : (
+                    msgBlocks.map((b) => (
+                      <div key={b.id} className="stack" style={{ gap: 4 }}>
+                        <button type="button" className="btn btn-sm btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => drawer.open('block', b.id)}>
+                          <span className="mono">{b.id}</span> · {b.sectionText}
+                        </button>
+                        <MessageThread blockId={b.id} />
+                      </div>
+                    ))
+                  )}
+                  <div className="section-title">{t('devAcks', { date: dateLabel(dayIso) })}</div>
+                  <AckCounts orders={dayOrders} />
                 </div>
               </CardBody>
             </Card>
@@ -862,12 +954,23 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
                 </>
               }
             />
+            <CardBody tight>
+              <div className="row-wrap" style={{ gap: 8 }}>
+                <span className="small muted">{t('mapLayers')}</span>
+                <ChipGroup<MapLayer> multi value={mapLayers} onChange={(v) => setMapLayers(Array.isArray(v) ? v : [v])} options={MAP_LAYERS.map((k) => ({ value: k, label: t(`ml_${k}` as Key) }))} />
+              </div>
+              {mapLayers.includes('signals') && <div className="tiny muted mt">{t('signalsNote')}</div>}
+            </CardBody>
             <CardBody flush>
               <CorridorMap
                 corridor={corridor}
                 blocks={dayBlocks}
                 trains={positions}
                 incidents={corridorReports}
+                tasks={mapTasks}
+                machines={snapshot.feeds.machines}
+                crews={snapshot.feeds.crews}
+                layers={mapLayerFlags}
                 height={600}
                 selected={trainNo ? { kind: 'train', id: trainNo } : null}
                 onSelect={(kind, id) => {
@@ -969,6 +1072,7 @@ function ControlBoard({ snapshot, view }: { snapshot: Snapshot; view: View }) {
         </Modal>
       )}
 
+      {corridorDialog}
       <BlockDrawer blockId={drawer.blockId} onClose={() => drawer.close('block')} />
       <TaskDrawer taskId={drawer.taskId} onClose={() => drawer.close('task')} />
       <ReportDrawer reportId={drawer.reportId} onClose={() => drawer.close('report')} />
@@ -1045,6 +1149,7 @@ function RefuseModal({ block, onClose, onConfirm }: { block: WorkingBlock; onClo
 /* ── Clear (line fit for traffic) ───────────────────────────── */
 interface ClearResult {
   actualEnd: number;
+  overrunCause?: string;
   tsr: { kmph: number; fromKm: number; toKm: number; reason: string } | null;
 }
 
@@ -1056,6 +1161,7 @@ function ClearModal({ block, corridor, defaultMinute, onClose, onConfirm }: { bl
   const [fromKm, setFromKm] = useState(block.startKm.toFixed(1));
   const [toKm, setToKm] = useState(block.endKm.toFixed(1));
   const [reason, setReason] = useState('');
+  const [overrun, setOverrun] = useState('');
 
   const a = Number(fromKm);
   const b = Number(toKm);
@@ -1079,6 +1185,7 @@ function ClearModal({ block, corridor, defaultMinute, onClose, onConfirm }: { bl
             onClick={() =>
               onConfirm({
                 actualEnd: toMin(time),
+                overrunCause: overrun.trim() || undefined,
                 tsr: mode === 'TSR' ? { kmph: v, fromKm: a, toKm: b, reason: reason.trim() || t('clearReasonDefault', { id: block.id }) } : null,
               })
             }
@@ -1105,6 +1212,9 @@ function ClearModal({ block, corridor, defaultMinute, onClose, onConfirm }: { bl
             />
           </Field>
         </div>
+        <Field label={t('clearOverrun')} hint={t('clearOverrunHint', { end: hhmm(block.end) })}>
+          <input className="input" value={overrun} placeholder={t('clearOverrunPlaceholder')} onChange={(e) => setOverrun(e.target.value)} />
+        </Field>
         {mode === 'TSR' && (
           <>
             <div className="grid grid-3" style={{ gap: 10 }}>

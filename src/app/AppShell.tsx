@@ -6,9 +6,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, Bell, BookOpen, Calendar, CalendarRange, Camera, CheckSquare, ClipboardList, Compass, Download, FileText, Flame, Home, Inbox, List, LogOut, Map as MapIcon, Menu, Moon, PlayCircle, PlusCircle, Radio, RefreshCw, Search, Settings, Share2, Shield, Sliders, Sparkles, Sun, Train, TrendingUp, Users, Wrench, X, Zap, Languages, HelpCircle, ChevronDown,
+  Activity, AlertTriangle, Bell, BellOff, BellRing, BookOpen, Calendar, CalendarRange, Camera, CheckSquare, ClipboardList, Compass, Download, FileText, Flame, Home, Inbox, List, LogOut, Map as MapIcon, Menu, Moon, PlayCircle, PlusCircle, Radio, RefreshCw, Search, Settings, Share2, Shield, Sliders, Sparkles, Sun, Train, TrendingUp, UserRoundCog, Users, Wrench, X, Zap, Languages, HelpCircle, ChevronDown, ChevronRight,
 } from 'lucide-react';
-import { PORTALS, PORTAL_ORDER, ROLES } from '../auth/portals';
+import { DEMO_ACCOUNTS, PORTALS, PORTAL_ORDER, ROLES, toSession, type DemoAccount, type PortalId } from '../auth/portals';
 import { CORRIDORS } from '../engine/corridors.js';
 import type { Corridor } from '../engine/types';
 import { LANGS, useLang, useT } from '../i18n';
@@ -21,6 +21,8 @@ import { useInstallPrompt } from '../features/pwa/useInstallPrompt';
 import { CommandPalette } from '../features/palette/CommandPalette';
 import { Badge, Toasts } from '../components/ui';
 import { startTour } from '../features/tour/tour';
+import { useCorridorSwitch } from '../components/domain/planHooks';
+import { SimLabel } from '../components/ui/extras';
 import { TOUR_STEPS } from '../features/tour/steps';
 import './shell.css';
 
@@ -46,7 +48,15 @@ export function AppShell() {
   const language = useAppStore((s) => s.language);
   const setLanguage = useAppStore((s) => s.setLanguage);
   const corridorId = useAppStore((s) => s.corridorId);
-  const setCorridor = useAppStore((s) => s.setCorridor);
+  const { request: requestCorridor, dialog: corridorDialog } = useCorridorSwitch();
+  const login = useAppStore((s) => s.login);
+  const resetTours = useAppStore((s) => s.resetTours);
+  const toast = useAppStore((s) => s.toast);
+  const deviceNotifications = useAppStore((s) => s.deviceNotifications);
+  const enableDeviceNotifications = useAppStore((s) => s.enableDeviceNotifications);
+  const disableDeviceNotifications = useAppStore((s) => s.disableDeviceNotifications);
+  const [demoOpen, setDemoOpen] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission));
   const status = useAppStore((s) => s.planStatus);
   const progress = useAppStore((s) => s.planProgress);
   const runPlan = useAppStore((s) => s.runPlan);
@@ -69,6 +79,7 @@ export function AppShell() {
     setDrawer(false);
     setNotifOpen(false);
     setUserOpen(false);
+    setDemoOpen(false);
   }, [loc.pathname]);
 
   useEffect(() => {
@@ -113,6 +124,46 @@ export function AppShell() {
   const showReplan = portal !== 'field' && portal !== 'citizen';
   const otherPortals = useMemo(() => PORTAL_ORDER.filter((p) => p !== portal && p !== 'citizen'), [portal]);
   const canSwitch = user?.role === 'DRM' || user?.role === 'ADMIN';
+  const L = lang === 'hi' ? 'hi' : 'en';
+
+  /* demo accounts other than the signed-in one, grouped by portal */
+  const demoGroups = useMemo(() => {
+    if (!user?.demo) return [];
+    const others = DEMO_ACCOUNTS.filter((a) => a.id !== user.id);
+    return PORTAL_ORDER.map((p) => ({ portal: p, accounts: others.filter((a) => ROLES[a.role].portal === p) })).filter((g) => g.accounts.length > 0);
+  }, [user]);
+
+  const switchDemo = (a: DemoAccount) => {
+    const s = toSession(a);
+    // sign out first so the audit trail records who left and who came in
+    logout();
+    login(s);
+    setUserOpen(false);
+    setDemoOpen(false);
+    toast({ title: t('signedInAs', { name: a.name }), body: t('signedInAsBody', { role: ROLES[a.role].label[L], portal: PORTALS[s.portal].label[L] }), tone: 'ok' });
+    nav(PORTALS[s.portal].landing);
+  };
+
+  const restartTour = () => {
+    resetTours();
+    setUserOpen(false);
+    toast({ title: t('tourRestarted'), body: t('tourRestartedBody'), tone: 'info' });
+    runTour();
+  };
+
+  const toggleDeviceNotifications = async () => {
+    if (deviceNotifications) {
+      disableDeviceNotifications();
+      toast({ title: t('notifOffToast'), tone: 'info' });
+      return;
+    }
+    const p = await enableDeviceNotifications();
+    setPermission(p);
+    if (p === 'granted') toast({ title: t('notifOnToast'), body: t('notifOnBody'), tone: 'ok' });
+    else if (p === 'denied') toast({ title: t('notifDeniedToast'), body: t('notifDeniedBody'), tone: 'warn' });
+    else if (p === 'unsupported') toast({ title: t('notifUnsupportedToast'), tone: 'warn' });
+    else toast({ title: t('notifDefaultToast'), body: t('notifDefaultBody'), tone: 'info' });
+  };
 
   return (
     <div className={`shell portal-${portal}`} data-portal={portal}>
@@ -208,7 +259,7 @@ export function AppShell() {
           {showReplan && (
             <label className="shell-corridor hide-mobile" data-tour="corridor">
               <span className="caps">{t('corridor')}</span>
-              <select className="select" value={corridorId} onChange={(e) => setCorridor(e.target.value)} aria-label={t('corridor')}>
+              <select className="select" value={corridorId} onChange={(e) => requestCorridor(e.target.value)} aria-label={t('corridor')}>
                 {corridors.map((c) => (
                   <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
                 ))}
@@ -263,7 +314,7 @@ export function AppShell() {
           </div>
           {user && (
             <div style={{ position: 'relative' }}>
-              <button className="shell-user" onClick={() => setUserOpen((v) => !v)} data-tour="user-menu">
+              <button className="shell-user" onClick={() => setUserOpen((v) => !v)} data-tour="user-menu" aria-haspopup="true" aria-expanded={userOpen}>
                 <span className={`shell-avatar pastel-${meta.pastel}`}>{initials(user.name)}</span>
                 <span className="hide-mobile" style={{ textAlign: 'left', lineHeight: 1.15 }}>
                   <span className="strong small" style={{ display: 'block' }}>{user.name}</span>
@@ -277,9 +328,40 @@ export function AppShell() {
                   <div className="shell-popover shell-usermenu">
                     <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
                       <div className="strong">{user.name}</div>
-                      <div className="small muted">{ROLES[user.role].label[lang === 'hi' ? 'hi' : 'en']} · {user.division} division</div>
-                      {user.demo && <Badge tone="yellow" className="mt">Demo account</Badge>}
+                      <div className="small muted">{ROLES[user.role]?.label[L] ?? user.role} · {t('divisionOf', { division: user.division })}</div>
+                      {user.demo && (
+                        <div className="row-wrap mt" style={{ gap: 6 }}>
+                          <Badge tone="yellow">{t('demoAccount')}</Badge>
+                          <SimLabel kind="localAuth" short />
+                        </div>
+                      )}
                     </div>
+                    {user.demo && demoGroups.length > 0 && (
+                      <div style={{ padding: '6px', borderBottom: '1px solid var(--line)' }}>
+                        <button className="shell-menu-item" onClick={() => setDemoOpen((v) => !v)} aria-expanded={demoOpen} title={t('switchDemoHint')}>
+                          <UserRoundCog size={15} /> <span className="grow" style={{ textAlign: 'left' }}>{t('switchDemo')}</span>
+                          <ChevronRight size={14} style={{ transform: demoOpen ? 'rotate(90deg)' : undefined, opacity: 0.6 }} />
+                        </button>
+                        {demoOpen && (
+                          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                            {demoGroups.map((g) => (
+                              <div key={g.portal}>
+                                <div className="caps" style={{ padding: '6px 10px 2px' }}>{PORTALS[g.portal as PortalId].short[L]}</div>
+                                {g.accounts.map((a) => (
+                                  <button key={a.id} className="shell-menu-item" onClick={() => switchDemo(a)}>
+                                    <span className={`dot`} style={{ background: `var(--pastel-${PORTALS[g.portal as PortalId].pastel})`, border: '1px solid var(--line-2)' }} />
+                                    <span className="grow" style={{ textAlign: 'left', minWidth: 0 }}>
+                                      <span className="small strong" style={{ display: 'block' }}>{a.name}</span>
+                                      <span className="tiny muted truncate" style={{ display: 'block' }}>{ROLES[a.role].label[L]}</span>
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {canSwitch && (
                       <div style={{ padding: '8px 6px', borderBottom: '1px solid var(--line)' }}>
                         <div className="caps" style={{ padding: '4px 8px' }}>{t('switchPortal')}</div>
@@ -291,8 +373,21 @@ export function AppShell() {
                         ))}
                       </div>
                     )}
+                    <div style={{ padding: '6px', borderBottom: '1px solid var(--line)' }}>
+                      <button className="shell-menu-item" onClick={restartTour}>
+                        <HelpCircle size={15} /> {t('restartTour')}
+                      </button>
+                      <button className="shell-menu-item" role="switch" aria-checked={deviceNotifications} onClick={() => void toggleDeviceNotifications()} title={t('deviceNotifsHint')}>
+                        {deviceNotifications ? <BellRing size={15} /> : <BellOff size={15} />}
+                        <span className="grow" style={{ textAlign: 'left' }}>{t('deviceNotifs')}</span>
+                        <Badge tone={deviceNotifications ? 'ok' : 'gray'}>{deviceNotifications ? t('deviceOn') : t('deviceOff')}</Badge>
+                      </button>
+                      <div className="tiny muted" style={{ padding: '0 10px 6px' }}>
+                        {t('permission', { p: t(`perm_${permission}` as const) })} · {t('deviceNotifsHint')}
+                      </div>
+                    </div>
                     <div style={{ padding: '6px' }}>
-                      <Link to="/" className="shell-menu-item"><Compass size={15} /> All portals</Link>
+                      <Link to="/" className="shell-menu-item"><Compass size={15} /> {t('allPortals')}</Link>
                       <button className="shell-menu-item" onClick={() => { logout(); nav('/login'); }}>
                         <LogOut size={15} /> {t('signOut')}
                       </button>
@@ -335,6 +430,7 @@ export function AppShell() {
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} portal={portal} />
+      {corridorDialog}
       <Toasts />
     </div>
   );

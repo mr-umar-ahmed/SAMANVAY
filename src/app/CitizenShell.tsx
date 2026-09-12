@@ -96,6 +96,10 @@ export function CitizenShell() {
       )}
       <main className="citizen-content">
         <Outlet />
+        {/* inside the content area: its bottom padding keeps this clear of the fixed bottom nav */}
+        <p className="tiny muted center" style={{ marginTop: 24 }}>
+          <Link to="/workflow" className="muted">{t('workflowLink')}</Link>
+        </p>
       </main>
       <nav className="citizen-bottom" aria-label="Citizen">
         {items.map((i) => (

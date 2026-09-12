@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Copy, Download, ExternalLink, FileJson, Lock, PhoneCall, RotateCcw, Send, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Download, ExternalLink, FileJson, Lock, PhoneCall, RotateCcw, Send, XCircle } from 'lucide-react';
 import { usePortal } from '../../app/usePortal';
 import { can, type PortalId } from '../../auth/portals';
 import { useAppStore } from '../../store/useAppStore';
@@ -21,6 +21,10 @@ import { Badge, Callout, Card, CardBody, CardHead, DataTable, DeptBadge, EmptySt
 import { AuditTrail, SimLabel } from '../../components/ui/extras';
 import { BlockDrawer } from '../../components/domain/BlockDrawer';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
+import { TaskDrawer } from '../../components/domain/TaskDrawer';
+import { ConflictsPanel } from '../../components/domain/ConflictsPanel';
+import { SupersededList } from '../../components/domain/SupersededList';
+import { useConflictRows, useSupersededRows } from '../../components/domain/planHooks';
 import { FLOW_LABEL, FLOW_TONE, flowState, planStrings, type FlowState } from './planMetrics';
 
 export interface HandoffPageProps {
@@ -29,10 +33,11 @@ export interface HandoffPageProps {
 
 type FilterTab = 'ALL' | FlowState | 'OBJECTIONS';
 type PanelTab = 'concurrence' | 'export' | 'advisories' | 'events';
+type ViewTab = 'blocks' | 'conflicts' | 'superseded';
 type RefuseKey = 'refTraffic' | 'refT351' | 'refMachine' | 'refGang' | 'refPath' | 'refOther';
 
 const DEPTS: Dept[] = ['TMS', 'SMMS', 'TDMS'];
-const FILTERS: FilterTab[] = ['ALL', 'DRAFT', 'AWAITING', 'READY', 'GRANTED', 'LOCKED', 'REFUSED', 'OBJECTIONS'];
+const FILTERS: FilterTab[] = ['ALL', 'DRAFT', 'AWAITING', 'READY', 'GRANTED', 'LOCKED', 'REFUSED', 'SUPERSEDED', 'OBJECTIONS'];
 const REFUSE_KEYS: RefuseKey[] = ['refTraffic', 'refT351', 'refMachine', 'refGang', 'refPath', 'refOther'];
 
 const strings = {
@@ -132,6 +137,11 @@ const strings = {
     refGang: 'Gang not reported at site',
     refPath: 'Path needed for an out-of-course train',
     refOther: 'Other',
+    viewBlocks: 'Blocks',
+    viewConflicts: 'Conflicts & dependencies',
+    viewSuperseded: 'Changed after sending',
+    supersededSub: 'Sent proposals the last re-plan changed, with the block that now holds the same works.',
+    sendNothing: 'No block was sent — none of them is a draft any more.',
   },
   hi: {
     title: 'हैंड-ऑफ़',
@@ -229,6 +239,11 @@ const strings = {
     refGang: 'गैंग साइट पर नहीं पहुँची',
     refPath: 'असामान्य ट्रेन हेतु पथ आवश्यक',
     refOther: 'अन्य',
+    viewBlocks: 'Block',
+    viewConflicts: 'टकराव व निर्भरताएँ',
+    viewSuperseded: 'भेजने के बाद बदले',
+    supersededSub: 'पिछली पुनः योजना से बदले भेजे गए प्रस्ताव, और वह block जिसमें अब वही कार्य हैं।',
+    sendNothing: 'कोई block नहीं भेजा गया — अब कोई ड्राफ़्ट नहीं है।',
   },
 } as const;
 
@@ -254,6 +269,7 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
   const grant = useAppStore((s) => s.grant);
   const refuse = useAppStore((s) => s.refuse);
   const lock = useAppStore((s) => s.lock);
+  const lockBlocks = useAppStore((s) => s.lockBlocks);
   const notify = useAppStore((s) => s.notify);
   const addAudit = useAppStore((s) => s.addAudit);
   const toast = useAppStore((s) => s.toast);
@@ -278,11 +294,14 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
   const [refuseKey, setRefuseKey] = useState<RefuseKey>('refTraffic');
   const [refuseDetail, setRefuseDetail] = useState('');
   const [touched, setTouched] = useState(false);
+  const [view, setView] = useState<ViewTab>('blocks');
 
   const blocks = useMemo(() => workingBlocks(snapshot, approvals), [snapshot, approvals]);
+  const conflictRows = useConflictRows(snapshot, blocks);
+  const supersededRows = useSupersededRows(snapshot, blocks);
 
   const counts = useMemo(() => {
-    const c: Record<FilterTab, number> = { ALL: blocks.length, DRAFT: 0, AWAITING: 0, READY: 0, GRANTED: 0, LOCKED: 0, REFUSED: 0, OBJECTIONS: 0 };
+    const c: Record<FilterTab, number> = { ALL: blocks.length, DRAFT: 0, AWAITING: 0, READY: 0, GRANTED: 0, LOCKED: 0, REFUSED: 0, SUPERSEDED: 0, OBJECTIONS: 0 };
     for (const b of blocks) {
       c[flowState(b)]++;
       if (b.approval?.objections.length) c.OBJECTIONS++;
@@ -315,21 +334,25 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
   const payloadJson = useMemo(() => (active ? JSON.stringify(toBdmsDemand(active, corridor, snapshot.planStart), null, 2) : ''), [active, corridor, snapshot.planStart]);
 
   const drafts = blocks.filter((b) => flowState(b) === 'DRAFT');
-  const d1Granted = blocks.filter((b) => b.day === 1 && b.status === 'GRANTED');
+  const d1Granted = blocks.filter((b) => b.day === 1 && b.state === 'GRANTED');
   const sentCount = blocks.length - counts.DRAFT;
 
   /* ── actions ─────────────────────────────────────────────── */
   const requestConcurrence = (list: WorkingBlock[]) => {
     if (!canPlan || !list.length) return;
-    proposeBlocks(list.map((b) => b.id));
+    const n = proposeBlocks(list.map((b) => b.id));
+    if (!n) {
+      toast({ title: t('sendNothing'), tone: 'warn' });
+      return;
+    }
     const depts = DEPTS.filter((d) => list.some((b) => b.departments.includes(d)));
     const first = `${list[0].sectionText} · ${dateLabel(list[0].date)} ${list[0].startText}–${list[0].endText}`;
     for (const d of depts) {
       const n = list.filter((b) => b.departments.includes(d)).length;
       notify({ portals: [d.toLowerCase() as PortalId], dept: d, kind: 'ACTION', title: t('notifyDeptTitle', { n }), body: t('notifyDeptBody', { first }), route: `/app/${d.toLowerCase()}/blocks` });
     }
-    notify({ portals: ['control'], kind: 'ACTION', title: t('notifyControlTitle', { n: list.length }), body: first, route: '/app/control/handoff' });
-    toast({ title: t('requested', { depts: depts.map(deptName).join(', ') }), body: t('requestedBody', { n: list.length }), tone: 'ok' });
+    notify({ portals: ['control'], kind: 'ACTION', title: t('notifyControlTitle', { n }), body: first, route: '/app/control/handoff' });
+    toast({ title: t('requested', { depts: depts.map(deptName).join(', ') }), body: t('requestedBody', { n }), tone: 'ok' });
   };
 
   const openConcur = (b: WorkingBlock) => {
@@ -344,15 +367,14 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
   const submitConcur = () => {
     setTouched(true);
     if (!active || !officer.trim() || !concurNote.trim()) return;
-    concur(active.id, concurDept, t('onBehalfNote', { officer: officer.trim(), note: concurNote.trim() }));
+    if (!concur(active.id, concurDept, t('onBehalfNote', { officer: officer.trim(), note: concurNote.trim() }))) return;
     toast({ title: t('concurToast', { dept: deptName(concurDept) }), body: active.id, tone: 'ok' });
     setModal(null);
   };
 
   const doGrant = (b: WorkingBlock) => {
     if (!canGrant) return;
-    grant(b.id);
-    toast({ title: t('grantedToast', { id: b.id }), body: `${b.sectionText} · ${b.startText}–${b.endText}`, tone: 'ok' });
+    if (grant(b.id)) toast({ title: t('grantedToast', { id: b.id }), body: `${b.sectionText} · ${b.startText}–${b.endText}`, tone: 'ok' });
   };
 
   const submitRefuse = () => {
@@ -360,21 +382,20 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
     if (!active || !canGrant) return;
     if (refuseKey === 'refOther' && !refuseDetail.trim()) return;
     const reason = `${t(refuseKey)}${refuseDetail.trim() ? ` — ${refuseDetail.trim()}` : ''}`;
-    refuse(active.id, reason);
+    if (!refuse(active.id, reason)) return;
     toast({ title: t('refusedToast', { id: active.id }), body: reason, tone: 'warn' });
     setModal(null);
   };
 
   const doLock = (b: WorkingBlock) => {
     if (!canLock) return;
-    lock(b.id);
-    toast({ title: t('lockedToast', { id: b.id }), body: b.sectionText, tone: 'ok' });
+    if (lock(b.id)) toast({ title: t('lockedToast', { id: b.id }), body: b.sectionText, tone: 'ok' });
   };
 
   const lockD1 = () => {
     if (!canLock || !d1Granted.length) return;
-    for (const b of d1Granted) lock(b.id);
-    toast({ title: t('lockedD1Toast', { n: d1Granted.length }), body: dateLabel(addDaysIso(snapshot.planStart, 1)), tone: 'ok' });
+    const n = lockBlocks(d1Granted.map((b) => b.id));
+    if (n) toast({ title: t('lockedD1Toast', { n }), body: dateLabel(addDaysIso(snapshot.planStart, 1)), tone: 'ok' });
   };
 
   const exportFile = (kind: 'csv' | 'json') => {
@@ -502,7 +523,7 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
                     <Send size={13} /> {t('request')}
                   </button>
                 )}
-                {active.status === 'PROPOSED' && pendingDepts.length > 0 && (
+                {active.state === 'PROPOSED' && pendingDepts.length > 0 && (
                   <button type="button" className="btn btn-sm" disabled={!canPlan} title={canPlan ? undefined : t('noCapPlan')} onClick={() => openConcur(active)}>
                     <PhoneCall size={13} /> {t('onBehalf')}
                   </button>
@@ -522,7 +543,7 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
                   <CheckCircle2 size={13} /> {t('grant')}
                 </button>
               )}
-              {active.status === 'PROPOSED' && (
+              {(active.state === 'PROPOSED' || active.state === 'CONCURRED') && (
                 <button
                   type="button"
                   className="btn btn-sm btn-danger"
@@ -538,7 +559,7 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
                   <XCircle size={13} /> {t('refuse')}
                 </button>
               )}
-              {active.status === 'GRANTED' && (
+              {active.state === 'GRANTED' && (
                 <button type="button" className="btn btn-sm" disabled={!canLock} title={canLock ? undefined : t('noCapLock')} onClick={() => doLock(active)}>
                   <Lock size={13} /> {t('lock')}
                 </button>
@@ -638,6 +659,30 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
         <StatTile label={t('statObjections')} value={counts.OBJECTIONS} pastel={counts.OBJECTIONS ? 'pink' : undefined} />
       </div>
 
+      <Tabs<ViewTab>
+        tour="handoff-views"
+        tabs={[
+          { id: 'blocks', label: t('viewBlocks'), count: blocks.length },
+          { id: 'conflicts', label: t('viewConflicts'), count: conflictRows.length, icon: <AlertTriangle size={14} /> },
+          { id: 'superseded', label: t('viewSuperseded'), count: supersededRows.length, icon: <RotateCcw size={14} /> },
+        ]}
+        value={view}
+        onChange={setView}
+      />
+
+      {view === 'conflicts' && <ConflictsPanel snapshot={snapshot} blocks={blocks} tour="handoff-conflicts" />}
+
+      {view === 'superseded' && (
+        <Card>
+          <CardHead title={t('viewSuperseded')} sub={t('supersededSub')} />
+          <CardBody>
+            <SupersededList snapshot={snapshot} blocks={blocks} />
+          </CardBody>
+        </Card>
+      )}
+
+      {view === 'blocks' && (
+      <>
       <div className="row-wrap" style={{ justifyContent: 'space-between' }}>
         <Tabs<FilterTab> tabs={FILTERS.map((f) => ({ id: f, label: filterLabel(f), count: counts[f] }))} value={filter} onChange={setFilter} />
         <div className="row-wrap">
@@ -721,8 +766,11 @@ function HandoffBody({ snapshot, modeProp }: { snapshot: Snapshot; modeProp?: Ha
           )}
         </Card>
       </div>
+      </>
+      )}
 
       <BlockDrawer blockId={drawer.blockId} onClose={() => drawer.close('block')} />
+      <TaskDrawer taskId={drawer.taskId} onClose={() => drawer.close('task')} />
 
       {active && (
         <Modal

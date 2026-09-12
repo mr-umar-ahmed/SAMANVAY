@@ -7,8 +7,8 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Flame, Play, RefreshCw, RotateCcw, Scale, ShieldAlert, Sliders, Undo2, XCircle, Zap } from 'lucide-react';
-import { useAppStore, type ScenarioState } from '../../store/useAppStore';
+import { CheckCircle2, Cpu, Flame, Play, RefreshCw, RotateCcw, Scale, ShieldAlert, Sliders, Undo2, XCircle, Zap } from 'lucide-react';
+import { useAppStore, type ScenarioState, type SolverChoice } from '../../store/useAppStore';
 import { can, type PortalId } from '../../auth/portals';
 import { DEFAULT_WEIGHTS, WORK_TYPES } from '../../engine/constants.js';
 import { SCENARIO_PRESETS, buildScenarioFromPreset } from '../../engine/scenarios.js';
@@ -17,9 +17,11 @@ import type { Dept, InjectSpec, Kpis, Line, Plan, Rules, RunLine, Scenario, Snap
 import { useT } from '../../i18n';
 import { common } from '../../i18n/common';
 import { addDaysIso, dateLabel, hhmm, num, pct, signed, toMin } from '../../lib/format';
-import { Badge, Callout, Card, CardBody, CardHead, DataTable, EmptyState, Field, KeyValue, PageHeader, PlanPending, Spinner, Tabs, type Column } from '../../components/ui';
+import { Badge, Callout, Card, CardBody, CardHead, DataTable, EmptyState, Field, KeyValue, PageHeader, PlanPending, Segmented, Spinner, Tabs, type Column } from '../../components/ui';
 import { SeedStamp, SimLabel, Slider } from '../../components/ui/extras';
 import { BarChart } from '../../components/viz';
+import { SafetyBanner } from '../../components/domain/SafetyBanner';
+import { SolverDetails } from '../../components/domain/SolverStamp';
 import { ALL_KPIS, compareKpi, FEED_SEED, formatKpi, formatKpiDelta, KPI_LABEL, KPI_METHOD, kpiValue, planStrings, type KpiKey } from './planMetrics';
 
 export interface OptimiserPageProps {
@@ -31,9 +33,13 @@ type WeightKey = keyof Weights;
 type NumericRuleKey = 'minBlockMin' | 'maxBlockMin' | 'headwayMarginMin' | 'slwDelayMin' | 'slwCapacityPerHour' | 'maxBlocksPerDay' | 'maxConcurrentBlocks' | 'annealT0' | 'noticeWeeksForRegulation';
 type PresetId = (typeof SCENARIO_PRESETS)[number]['id'];
 
-const WEIGHT_KEYS: WeightKey[] = ['delay', 'downtime', 'risk', 'colocation', 'tsr', 'spread'];
+const WEIGHT_KEYS: WeightKey[] = ['delay', 'downtime', 'risk', 'colocation', 'tsr', 'spread', 'preference'];
 const RULE_KEYS: NumericRuleKey[] = ['minBlockMin', 'maxBlockMin', 'headwayMarginMin', 'slwDelayMin', 'slwCapacityPerHour', 'maxBlocksPerDay', 'maxConcurrentBlocks', 'annealT0', 'noticeWeeksForRegulation'];
 const DEFAULTS = DEFAULT_WEIGHTS as Weights;
+/** UI floor of the risk weight: efficiency weights must not be able to push mandatory safety work out of the plan. */
+const RISK_FLOOR_SHARE = 0.5;
+const RISK_FLOOR = DEFAULTS.risk * RISK_FLOOR_SHARE;
+const floorRisk = (w: Weights): Weights => (w.risk < RISK_FLOOR ? { ...w, risk: RISK_FLOOR } : w);
 const COST_KEYS = ['delay', 'downtime', 'spread', 'waiting', 'deferred'] as const;
 
 const strings = {
@@ -71,6 +77,9 @@ const strings = {
     w_tsrHint: 'Per train-minute lost to a speed restriction while its work waits',
     w_spread: 'Block count',
     w_spreadHint: 'Per block — favours fewer, fuller blocks',
+    w_preference: 'Requisition preferences',
+    w_preferenceHint: 'Per day away from the preferred day a requisition asked for; three times this when the work starts outside its preferred window',
+    riskFloor: 'Floor {v} ({p} % of the default): efficiency weights must not override safety.',
     rulesTitle: 'JPO rules',
     rulesSub: 'Hard limits the optimiser must respect when it lays blocks.',
     r_minBlockMin: 'Minimum block (min)',
@@ -82,12 +91,19 @@ const strings = {
     r_maxConcurrentBlocks: 'Simultaneous closures',
     r_annealT0: 'Annealing start temperature',
     r_noticeWeeksForRegulation: 'JPO notice for regulation (weeks)',
-    r_premium: 'Premium paths may never be blocked',
+    r_premium: 'Premium paths are a hard rule: no block may cross a Vande Bharat, Rajdhani or Shatabdi path (untick to let the optimiser block one and charge it as delay)',
     ruleMinMax: 'The minimum block must not exceed the ceiling.',
     iterTitle: 'Search',
-    iterSub: 'Simulated-annealing iterations after the greedy construction.',
+    iterSub: 'How the plan is built, and the simulated-annealing iterations that polish it.',
     iterations: 'Iterations',
-    solverNote: 'Greedy construction + simulated annealing in the browser. The CP-SAT reference formulation is documented, not executed.',
+    solverNote: 'Exact MILP over the candidate possessions, solved in the browser by HiGHS (WebAssembly), then simulated-annealing polish. If HiGHS cannot load, greedy construction + annealing runs instead. OR-Tools CP-SAT is the production target.',
+    solverLabel: 'Construction',
+    solverMilp: 'Exact MILP (HiGHS) + annealing polish',
+    solverSa: 'Greedy + annealing',
+    solverSet: 'Solver set: {name}',
+    solverSetBody: 'Applies to the next run — working plan or candidate.',
+    lastRun: 'Last run of the working plan',
+    lastCandidate: 'Candidate run',
     progress: 'Candidate run',
     compareTitle: 'Candidate · working · baseline',
     compareSub: 'Same seed and works, computed like-for-like. Δ is candidate minus working.',
@@ -209,6 +225,9 @@ const strings = {
     w_tsrHint: 'कार्य की प्रतीक्षा में TSR से खोए प्रति ट्रेन-मिनट',
     w_spread: 'Block संख्या',
     w_spreadHint: 'प्रति block — कम, भरे हुए block को प्राथमिकता',
+    w_preference: 'माँग-पत्र प्राथमिकताएँ',
+    w_preferenceHint: 'माँग-पत्र के पसंदीदा दिन से प्रति दिन की दूरी पर; पसंदीदा खिड़की से बाहर शुरू होने पर इसका तीन गुना',
+    riskFloor: 'न्यूनतम {v} (डिफ़ॉल्ट का {p} %): दक्षता भार सुरक्षा पर हावी नहीं हो सकते।',
     rulesTitle: 'JPO नियम',
     rulesSub: 'block रखते समय ऑप्टिमाइज़र द्वारा मानी जाने वाली कठोर सीमाएँ।',
     r_minBlockMin: 'न्यूनतम block (मिनट)',
@@ -220,12 +239,19 @@ const strings = {
     r_maxConcurrentBlocks: 'एक साथ बंदी',
     r_annealT0: 'एनीलिंग प्रारंभिक तापमान',
     r_noticeWeeksForRegulation: 'नियमन हेतु JPO नोटिस (सप्ताह)',
-    r_premium: 'प्रीमियम पथ कभी block न हों',
+    r_premium: 'प्रीमियम पथ कठोर नियम हैं: कोई block वंदे भारत, राजधानी या शताब्दी पथ को नहीं काट सकता (हटाने पर ऑप्टिमाइज़र एक पथ block कर सकता है, विलंब लागत के साथ)',
     ruleMinMax: 'न्यूनतम block अधिकतम सीमा से अधिक नहीं हो सकता।',
     iterTitle: 'खोज',
-    iterSub: 'ग्रीडी निर्माण के बाद सिम्युलेटेड-एनीलिंग iterations।',
+    iterSub: 'योजना कैसे बनती है, और उसे सुधारने वाली सिम्युलेटेड-एनीलिंग iterations।',
     iterations: 'Iterations',
-    solverNote: 'ब्राउज़र में ग्रीडी निर्माण + सिम्युलेटेड एनीलिंग। CP-SAT संदर्भ सूत्रीकरण प्रलेखित है, चलाया नहीं जाता।',
+    solverNote: 'संभावित पज़ेशन पर सटीक MILP, ब्राउज़र में HiGHS (WebAssembly) से हल, फिर सिम्युलेटेड-एनीलिंग सुधार। HiGHS लोड न हो तो ग्रीडी निर्माण + एनीलिंग चलता है। उत्पादन लक्ष्य OR-Tools CP-SAT है।',
+    solverLabel: 'निर्माण',
+    solverMilp: 'सटीक MILP (HiGHS) + एनीलिंग सुधार',
+    solverSa: 'ग्रीडी + एनीलिंग',
+    solverSet: 'सॉल्वर चुना गया: {name}',
+    solverSetBody: 'अगले run पर लागू — कार्यकारी योजना या candidate।',
+    lastRun: 'कार्यकारी योजना का पिछला run',
+    lastCandidate: 'Candidate run',
     progress: 'Candidate run',
     compareTitle: 'Candidate · कार्यकारी · आधार-रेखा',
     compareSub: 'वही seed और कार्य, समान तरीके से गणना। Δ = candidate − कार्यकारी।',
@@ -370,6 +396,8 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
   const runPlan = useAppStore((s) => s.runPlan);
   const notify = useAppStore((s) => s.notify);
   const toast = useAppStore((s) => s.toast);
+  const solver = useAppStore((s) => s.solver);
+  const setSolver = useAppStore((s) => s.setSolver);
 
   const canPlan = can(user, 'plan');
   const corridor = snapshot.corridor;
@@ -377,13 +405,13 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
   const deptName = (d: Dept) => tc(d === 'TMS' ? 'tms' : d === 'SMMS' ? 'smms' : 'tdms');
 
   /* ── drafts (re-synced when the store changes: reset, promote, other tab) ── */
-  const [localWeights, setLocalWeights] = useState<Weights>({ ...weights });
+  const [localWeights, setLocalWeights] = useState<Weights>(floorRisk({ ...DEFAULTS, ...weights }));
   const [localRules, setLocalRules] = useState<Rules>({ ...rules });
   const [localIterations, setLocalIterations] = useState<number>(iterations);
   const [syncedWeights, setSyncedWeights] = useState(weights);
   if (syncedWeights !== weights) {
     setSyncedWeights(weights);
-    setLocalWeights({ ...weights });
+    setLocalWeights(floorRisk({ ...DEFAULTS, ...weights }));
   }
   const [syncedRules, setSyncedRules] = useState(rules);
   if (syncedRules !== rules) {
@@ -438,13 +466,13 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
 
   const handleRun = async () => {
     if (rulesInvalid) return;
-    await runCandidate({ weights: localWeights, rules: localRules, iterations: localIterations }, 'studio');
+    await runCandidate({ weights: floorRisk(localWeights), rules: localRules, iterations: localIterations }, 'studio');
     toastCandidate();
   };
 
   const runWhatIf = async (add: Scenario, name: string) => {
     if (rulesInvalid) return;
-    await runCandidate({ weights: localWeights, rules: localRules, iterations: localIterations, scenario: mergeScenario(scenario, add, name) }, `what-if: ${name}`);
+    await runCandidate({ weights: floorRisk(localWeights), rules: localRules, iterations: localIterations, scenario: mergeScenario(scenario, add, name) }, `what-if: ${name}`);
     toastCandidate();
   };
 
@@ -466,7 +494,7 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
     if (!canPlan) return;
     resetTuning();
     const s = useAppStore.getState();
-    setLocalWeights({ ...s.weights });
+    setLocalWeights(floorRisk({ ...DEFAULTS, ...s.weights }));
     setLocalRules({ ...s.rules });
     setLocalIterations(s.iterations);
     toast({ title: t('resetDone'), tone: 'info' });
@@ -492,6 +520,12 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
     setScenario(st);
     toast({ title: t('applied'), body: st.name, tone: 'warn' });
     await runPlan({ reason: `scenario ${st.name}` });
+  };
+
+  const handleSolver = (v: SolverChoice) => {
+    if (!canPlan || v === solver) return;
+    setSolver(v);
+    toast({ title: t('solverSet', { name: v === 'milp' ? t('solverMilp') : t('solverSa') }), body: t('solverSetBody'), tone: 'info' });
   };
 
   const handleRevert = async () => {
@@ -555,11 +589,8 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
 
   /* ── search / objective ── */
   const searchItems = (p: Plan): [string, string][] => [
-    [t('kIterations'), num(p.search.iterations)],
-    [t('kCost'), `${num(p.search.greedyCost)} → ${num(p.search.finalCost)}`],
     [t('kImprovement'), p.search.greedyCost ? pct((p.search.greedyCost - p.search.finalCost) / p.search.greedyCost, 1) : '—'],
     [t('kAccepted'), num(p.search.accepted)],
-    [t('kTime'), `${num(p.search.timeMs / 1000, 1)} s`],
   ];
 
   const compareCard = (
@@ -643,6 +674,14 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
 
       {scenarioBanner}
 
+      <div className="stack" data-tour="optimiser-safety">
+        {candidate && candKpis ? (
+          <SafetyBanner snapshot={candidate.snapshot} plan={candidate.snapshot.result.weekly.ai} kpis={candKpis} candidate />
+        ) : (
+          <SafetyBanner snapshot={snapshot} plan={weekly.ai} kpis={weekly.kpis} />
+        )}
+      </div>
+
       <Tabs<TabId>
         tabs={[
           { id: 'studio', label: t('tabStudio') },
@@ -665,13 +704,23 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
                     <Slider
                       key={k}
                       label={t(`w_${k}` as Key)}
-                      hint={t(`w_${k}Hint` as Key)}
-                      value={localWeights[k]}
-                      min={0}
+                      hint={
+                        k === 'risk' ? (
+                          <>
+                            {t('w_riskHint')}
+                            <br />
+                            <span className="strong">{t('riskFloor', { v: num(RISK_FLOOR, decimals(k)), p: Math.round(RISK_FLOOR_SHARE * 100) })}</span>
+                          </>
+                        ) : (
+                          t(`w_${k}Hint` as Key)
+                        )
+                      }
+                      value={localWeights[k] ?? DEFAULTS[k]}
+                      min={k === 'risk' ? RISK_FLOOR : 0}
                       max={DEFAULTS[k] * 3}
                       step={DEFAULTS[k] / 20}
                       format={(v) => `${num(v, decimals(k))} (${num(v / DEFAULTS[k], 2)}×)`}
-                      onChange={(v) => setLocalWeights((w) => ({ ...w, [k]: v }))}
+                      onChange={(v) => setLocalWeights((w) => ({ ...w, [k]: k === 'risk' ? Math.max(RISK_FLOOR, v) : v }))}
                     />
                   ))}
                 </div>
@@ -705,12 +754,27 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
             </Card>
 
             <Card>
-              <CardHead title={t('iterTitle')} sub={t('iterSub')} />
+              <CardHead title={t('iterTitle')} sub={t('iterSub')} icon={<Cpu size={16} />} />
               <CardBody>
-                <Slider label={t('iterations')} value={localIterations} min={500} max={20000} step={500} format={(v) => num(v)} onChange={setLocalIterations} />
-                <div className="row-wrap mt">
-                  <SimLabel kind="solver" />
-                  <span className="tiny muted">{t('solverNote')}</span>
+                <div className="stack">
+                  <div className="field" data-tour="optimiser-solver">
+                    <label>{t('solverLabel')}</label>
+                    <Segmented<SolverChoice>
+                      ariaLabel={t('solverLabel')}
+                      value={solver}
+                      onChange={handleSolver}
+                      options={[
+                        { value: 'milp', label: t('solverMilp') },
+                        { value: 'sa', label: t('solverSa') },
+                      ]}
+                    />
+                    {!canPlan && <div className="hint">{t('noCap')}</div>}
+                  </div>
+                  <Slider label={t('iterations')} value={localIterations} min={500} max={20000} step={500} format={(v) => num(v)} onChange={setLocalIterations} />
+                  <div className="row-wrap">
+                    <SimLabel kind="solver" />
+                    <span className="tiny muted">{t('solverNote')}</span>
+                  </div>
                 </div>
               </CardBody>
             </Card>
@@ -758,13 +822,13 @@ function OptimiserBody({ snapshot, tab }: { snapshot: Snapshot; tab: TabId }) {
                 />
                 <div className="grid grid-2 mt-lg">
                   <div>
-                    <div className="caps mb">{t('sWorking')}</div>
-                    <KeyValue items={searchItems(weekly.ai)} />
+                    <div className="caps mb">{t('lastRun')}</div>
+                    <SolverDetails plan={weekly.ai} requested={solver} extra={<KeyValue items={searchItems(weekly.ai)} />} />
                   </div>
                   {candidate && (
                     <div>
-                      <div className="caps mb">{t('sCandidate')}</div>
-                      <KeyValue items={searchItems(candidate.snapshot.result.weekly.ai)} />
+                      <div className="caps mb">{t('lastCandidate')}</div>
+                      <SolverDetails plan={candidate.snapshot.result.weekly.ai} extra={<KeyValue items={searchItems(candidate.snapshot.result.weekly.ai)} />} />
                     </div>
                   )}
                 </div>

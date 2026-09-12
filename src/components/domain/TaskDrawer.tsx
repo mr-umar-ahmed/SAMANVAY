@@ -14,11 +14,13 @@ import { MACHINE_TYPES, CREW_TYPES } from '../../engine/constants.js';
 import type { BlockKind, Task } from '../../engine/types';
 import { can } from '../../auth/portals';
 import { usePortal } from '../../app/usePortal';
-import { useT } from '../../i18n';
+import { useLang, useT } from '../../i18n';
 import { ArciBar, Badge, Callout, DeptBadge, Drawer, KeyValue, Meter, SectionTitle, UrgencyBadge } from '../ui';
 import { SimLabel } from '../ui/extras';
-import { arciTone, copyText, dateLabel, duration, kmRange, lineLabel, num, pct } from '../../lib/format';
+import { addDaysIso, arciTone, copyText, dateLabel, duration, kmRange, lineLabel, num, pct } from '../../lib/format';
 import { useDrawerParams } from './useDrawerParams';
+import { AlternativeWindows, ArciBandLine } from './PlanExplain';
+import { reasonText } from './conflictText';
 
 const strings = {
   en: {
@@ -108,6 +110,17 @@ const strings = {
     copyFailed: 'Could not copy — select the id manually',
     noPermission: 'Your role cannot do this',
     notFound: 'No work with id {id} in this plan.',
+    band: 'Uncertainty',
+    alternatives: 'Alternative windows',
+    requirements: 'From the requisition',
+    prefDay: 'Preferred day',
+    prefWindow: 'Preferred window',
+    prefNight: 'Night ({from}–{to})',
+    prefDayWin: 'Day (outside {from}–{to})',
+    dependsOn: 'Must finish first',
+    coRequire: 'Must share one block with',
+    safetyTitle: 'Safety conflict',
+    safetyBody: 'Mandatory work not placed on or before its due day ({due}) — {reason}.',
   },
   hi: {
     details: 'कार्य विवरण',
@@ -191,6 +204,17 @@ const strings = {
     copyFailed: 'कॉपी नहीं हो सका — आईडी स्वयं चुनें',
     noPermission: 'आपकी भूमिका यह नहीं कर सकती',
     notFound: 'इस योजना में {id} आईडी का कोई कार्य नहीं।',
+    band: 'अनिश्चितता',
+    alternatives: 'वैकल्पिक समय-खिड़कियाँ',
+    requirements: 'माँग-पत्र से',
+    prefDay: 'पसंदीदा दिन',
+    prefWindow: 'पसंदीदा खिड़की',
+    prefNight: 'रात ({from}–{to})',
+    prefDayWin: 'दिन ({from}–{to} के बाहर)',
+    dependsOn: 'पहले पूरा होना चाहिए',
+    coRequire: 'इसके साथ एक block साझा करना है',
+    safetyTitle: 'सुरक्षा टकराव',
+    safetyBody: 'अनिवार्य कार्य अपने देय दिन ({due}) तक नहीं रखा गया — {reason}।',
   },
 } as const;
 
@@ -229,6 +253,7 @@ export type TaskDrawerMode = 'full' | 'readOnly';
 
 export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string | null; onClose: () => void; mode?: TaskDrawerMode }) {
   const t = useT(strings);
+  const lang = useLang();
   const nav = useNavigate();
   const portal = usePortal();
   const { open } = useDrawerParams();
@@ -282,6 +307,18 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
         : t('dueIn', { days: -task.daysOverdue, rule: task.mandatoryWithinDays });
 
   const maxContribution = Math.max(0.01, ...task.risk.mlContributions.map((c) => Math.abs(c.contribution)));
+  const plan = snapshot.result.weekly.ai;
+  const safety = (plan.safetyConflicts ?? []).find((s) => s.taskId === task.id) ?? null;
+  const alts = plan.alternatives?.[task.id];
+  const sched = place?.scheduled ?? null;
+  const taskName = (id: string) => snapshot.tasks.find((x) => x.id === id)?.label ?? id;
+  const night = snapshot.result.rules.nightWindow;
+  const hm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const reqItems: [string, React.ReactNode][] = [];
+  if (task.preferredDay !== null && task.preferredDay !== undefined) reqItems.push([t('prefDay'), dateLabel(addDaysIso(snapshot.planStart, task.preferredDay))]);
+  if (task.preferredWindow) reqItems.push([t('prefWindow'), task.preferredWindow === 'night' ? t('prefNight', { from: hm(night[0]), to: hm(night[1]) }) : t('prefDayWin', { from: hm(night[0]), to: hm(night[1]) })]);
+  if (task.dependsOn?.length) reqItems.push([t('dependsOn'), <span key="dep" className="row-wrap">{task.dependsOn.map((id) => <button key={id} type="button" className="btn btn-sm btn-ghost" onClick={() => open('task', id)}>{taskName(id)}</button>)}</span>]);
+  if (task.coRequireWith?.length) reqItems.push([t('coRequire'), <span key="co" className="row-wrap">{task.coRequireWith.map((id) => <button key={id} type="button" className="btn btn-sm btn-ghost" onClick={() => open('task', id)}>{taskName(id)}</button>)}</span>]);
 
   const onPin = () => {
     if (isPinned) {
@@ -359,6 +396,12 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
   return (
     <Drawer open onClose={onClose} title={task.label} subtitle={`${task.source} · ${task.sourceId}`} badges={badges} footer={footer}>
       <div data-tour="task-drawer" className="stack-lg">
+        {safety && (
+          <Callout tone="crit">
+            <b>{t('safetyTitle')}.</b> {t('safetyBody', { due: dateLabel(addDaysIso(snapshot.planStart, Math.max(0, safety.dueDay))), reason: reasonText(safety.reason, lang) })}
+            {safety.detail ? <div className="small">{reasonText(safety.detail, lang)}</div> : null}
+          </Callout>
+        )}
         {isExcluded && (
           <Callout tone="warn">
             <b>{t('closed')}</b> {t('closedBody')}
@@ -378,7 +421,7 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
           <SectionTitle>{t('location')}</SectionTitle>
           <KeyValue
             items={[
-              [t('nativeLocation'), <span className="mono">{task.nativeLocation}</span>],
+              [t('nativeLocation'), <span key="nl" className="mono">{task.nativeLocation}</span>],
               [
                 t('blockSection'),
                 <>
@@ -404,9 +447,9 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
                   )}
                 </>,
               ],
-              [t('machine'), task.machine ? MACHINES[task.machine]?.label ?? task.machine : <span className="muted">{t('noMachine')}</span>],
+              [t('machine'), task.machine ? MACHINES[task.machine]?.label ?? task.machine : <span key="nm" className="muted">{t('noMachine')}</span>],
               [t('crew'), CREWS[task.crew]?.label ?? task.crew],
-              [t('due'), <span className={task.daysOverdue > 0 ? 'strong' : ''} style={task.daysOverdue > 0 ? { color: 'var(--crit)' } : undefined}>{dueText}</span>],
+              [t('due'), <span key="due" className={task.daysOverdue > 0 ? 'strong' : ''} style={task.daysOverdue > 0 ? { color: 'var(--crit)' } : undefined}>{dueText}</span>],
             ]}
           />
         </section>
@@ -430,6 +473,13 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
               {t('formula', { uplift: task.risk.tsrUplift ? t('upliftText') : '', arci: task.risk.arci.toFixed(2) })}
             </div>
             <div className="small muted">{task.risk.mandatory ? t('floorApplied', { safety: task.safety.toFixed(2) }) : t('floorNotApplied', { safety: task.safety.toFixed(2) })}</div>
+            <div className="row" style={{ gap: 8, alignItems: 'flex-start' }} data-tour="task-band">
+              <span className="small strong" style={{ flex: 'none' }}>{t('band')}</span>
+              <div className="grow">
+                <ArciBandLine risk={task.risk} />
+              </div>
+              <SimLabel kind="model" short />
+            </div>
           </div>
 
           {task.risk.mlContributions.length > 0 && (
@@ -458,8 +508,16 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
         {/* ── Native record ── */}
         <section data-tour="task-native">
           <SectionTitle right={<SimLabel kind="seededFeed" system={task.source} seed={snapshot.feeds ? 26027 : undefined} />}>{t('native')}</SectionTitle>
-          {nativeRows.length ? <KeyValue items={nativeRows.map(([k, v]) => [k, <span className={/^-?[\d,.]+$/.test(v) ? 'num' : ''}>{v}</span>])} /> : <div className="small muted">{t('nativeEmpty')}</div>}
+          {nativeRows.length ? <KeyValue items={nativeRows.map(([k, v]) => [k, <span key={k} className={/^-?[\d,.]+$/.test(v) ? 'num' : ''}>{v}</span>])} /> : <div className="small muted">{t('nativeEmpty')}</div>}
         </section>
+
+        {(reqItems.length > 0 || task.injectedFields?.note) && (
+          <section>
+            <SectionTitle>{t('requirements')}</SectionTitle>
+            {task.injectedFields?.note && <div className="small muted mb">{task.injectedFields.note}</div>}
+            {reqItems.length > 0 && <KeyValue items={reqItems} />}
+          </section>
+        )}
 
         {/* ── Plan decision ── */}
         <section data-tour="task-plan">
@@ -468,11 +526,11 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
             <div className="stack">
               <KeyValue
                 items={[
-                  [t('blockId'), <span className="mono">{place.block.id}</span>],
+                  [t('blockId'), <span key="bid" className="mono">{place.block.id}</span>],
                   [t('date'), dateLabel(place.block.date)],
                   [
                     t('window'),
-                    <span className="num">
+                    <span key="win" className="num">
                       {place.block.startText} – {place.block.endText} · {duration(place.block.spanMin)}
                     </span>,
                   ],
@@ -514,6 +572,22 @@ export function TaskDrawer({ taskId, onClose, mode = 'full' }: { taskId: string 
             <Callout tone="neutral">{t('notPlaced')}</Callout>
           )}
         </section>
+
+        {/* ── Alternative windows (optimiser) ── */}
+        {(sched || alts?.length) && (
+          <section data-tour="task-alternatives">
+            <SectionTitle>{t('alternatives')}</SectionTitle>
+            <AlternativeWindows
+              planStart={snapshot.planStart}
+              alternatives={alts}
+              blockTasks={sched ? [{ id: task.id, start: sched.start, end: sched.end }] : []}
+              from={{ start: sched?.start ?? 0 }}
+              taskId={task.id}
+              fixed={place?.block?.fixed}
+              onGrantWithChange={portal === 'control' ? null : undefined}
+            />
+          </section>
+        )}
       </div>
     </Drawer>
   );

@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Train as TrainIcon } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import { blocksMetByTrain, cautionOrders, workingBlocks, type CautionOrder, type WorkingBlock } from '../../engine/select';
+import { acksForOrder, blocksMetByTrain, cautionOrders, workingBlocks, type CautionOrder, type WorkingBlock } from '../../engine/select';
 import type { AffectedTrain, Train } from '../../engine/types';
 import { useT } from '../../i18n';
 import { hhmm, kmRange } from '../../lib/format';
@@ -52,6 +52,9 @@ const strings = {
     awaiting: 'Awaiting Control',
     inForce: 'in force {n} d',
     note: 'View of the generated caution order, not the signed T/409 handed over at the station.',
+    ackedAt: 'Acknowledged {time} for train {no}',
+    ackedOther: 'Acknowledged {time}',
+    ackCount: '{n} acknowledgement(s) recorded',
   },
   hi: {
     title: 'मेरी ट्रेन',
@@ -90,6 +93,9 @@ const strings = {
     awaiting: 'कंट्रोल की स्वीकृति लंबित',
     inForce: '{n} दिन से लागू',
     note: 'यह जनरेट किए गए सतर्कता आदेश का दृश्य है, स्टेशन पर दिया गया हस्ताक्षरित T/409 नहीं।',
+    ackedAt: '{time} पर ट्रेन {no} के लिए पावती दी',
+    ackedOther: '{time} पर पावती दी',
+    ackCount: '{n} पावती दर्ज',
   },
 } as const;
 
@@ -113,7 +119,6 @@ export default function FieldTrainPage() {
   const forms = useAppStore((s) => s.forms);
   const acks = useAppStore((s) => s.acks);
   const ackCaution = useAppStore((s) => s.ackCaution);
-  const notify = useAppStore((s) => s.notify);
   const lastTrainNo = useAppStore((s) => s.lastTrainNo);
   const setLastTrainNo = useAppStore((s) => s.setLastTrainNo);
   const toast = useAppStore((s) => s.toast);
@@ -132,16 +137,16 @@ export default function FieldTrainPage() {
   if (!snapshot) return <PlanPending />;
 
   const ackBy = user?.name ?? 'Loco pilot';
-  const ackedByMe = (orderNo: string) => acks.some((a) => a.orderNo === orderNo && a.by === ackBy);
+  const myAck = (orderNo: string) => acksForOrder(acks, orderNo).find((a) => a.by === ackBy) ?? null;
+  const clockOf = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
   const modeLabel = (m: AffectedTrain['mode']) => (m === 'SLW' ? t('modeSLW') : m === 'HELD' ? t('modeHELD') : t('modeREGULATED'));
   const statusLabel = (b: WorkingBlock) => (b.status === 'LOCKED' ? t('locked') : b.status === 'GRANTED' ? t('granted') : t('awaiting'));
 
   const commit = () => setLastTrainNo(trainInput.trim() || null);
 
+  // one acknowledgement per person with the train number; the store notifies Control (and toasts a refusal)
   const onAck = (o: CautionOrder) => {
-    ackCaution(o.orderNo);
-    notify({ portals: ['control'], kind: 'OK', title: `Caution ${o.orderNo} acknowledged`, body: `${ackBy}${train ? ` · train ${train.number}` : ''}`, route: '/app/control/caution' });
-    toast({ title: t('toastAck', { no: o.orderNo }), tone: 'ok' });
+    if (ackCaution(o.orderNo, train?.number)) toast({ title: t('toastAck', { no: o.orderNo }), body: train ? `${ackBy} · ${train.number}` : ackBy, tone: 'ok' });
   };
 
   return (
@@ -244,7 +249,7 @@ export default function FieldTrainPage() {
                 <div className="stack">
                   {orders.map((o) => {
                     const iss = isIssued(o);
-                    const mine = ackedByMe(o.orderNo);
+                    const mine = myAck(o.orderNo);
                     return (
                       <div key={o.id} className="well stack" style={{ gap: 6 }}>
                         <div className="row-wrap" style={{ gap: 6 }}>
@@ -259,14 +264,15 @@ export default function FieldTrainPage() {
                           <span className="mono">{o.orderNo}</span> · {o.section} · {t('inForce', { n: o.daysInForce })}
                         </div>
                         {iss && (
-                          <div>
+                          <div className="row-wrap">
                             {mine ? (
-                              <Badge tone="ok" icon={<CheckCircle2 />}>{t('acked')}</Badge>
+                              <Badge tone="ok" icon={<CheckCircle2 />}>{mine.trainNo ? t('ackedAt', { time: clockOf(mine.at), no: mine.trainNo }) : t('ackedOther', { time: clockOf(mine.at) })}</Badge>
                             ) : (
                               <button type="button" className="btn btn-dark" style={{ minHeight: 44 }} onClick={() => onAck(o)}>
                                 <CheckCircle2 /> {t('ack')}
                               </button>
                             )}
+                            {(o.ackCount ?? 0) > 0 && <span className="tiny muted">{t('ackCount', { n: o.ackCount ?? 0 })}</span>}
                           </div>
                         )}
                       </div>

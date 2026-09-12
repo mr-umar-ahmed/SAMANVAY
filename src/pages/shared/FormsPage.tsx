@@ -9,16 +9,16 @@
  * form goes through FormSheet (not-official watermark).
  */
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { FileText, PlusCircle, ShieldAlert, Wrench, Zap } from 'lucide-react';
+import { FileText, Mail, MessageSquare, PlusCircle, ShieldAlert, Wrench, Zap } from 'lucide-react';
 import { usePortal } from '../../app/usePortal';
-import { can, type PortalId } from '../../auth/portals';
+import { ROLES, can, type PortalId, type RoleId } from '../../auth/portals';
 import { WORK_TYPES } from '../../engine/constants.js';
-import { cautionOrders, disconnectionNoticesWeek, workingBlocks, type CautionOrder, type DisconnectionNotice, type WorkingBlock } from '../../engine/select';
+import { acksForOrder, cautionOrders, disconnectionNoticesWeek, workingBlocks, type CautionOrder, type DisconnectionNotice, type WorkingBlock } from '../../engine/select';
 import type { Dept, Line, Snapshot } from '../../engine/types';
-import { useT } from '../../i18n';
-import { clamp, dateLabel, dateLong, hhmm, kmRange, lineLabel, num, timeAgo } from '../../lib/format';
-import { useAppStore, type ManualTsr } from '../../store/useAppStore';
-import { Badge, Card, CardBody, CardHead, DataTable, EmptyState, Field, Modal, PageHeader, PlanPending, StatTile, StatusBadge, Tabs, type Column } from '../../components/ui';
+import { pick as pickLang, useLang, useT } from '../../i18n';
+import { clamp, dateLabel, dateLong, hhmm, kmRange, lineLabel, nowMinuteIST, num, timeAgo } from '../../lib/format';
+import { useAppStore, type CautionAck, type ManualTsr } from '../../store/useAppStore';
+import { Badge, Card, CardBody, CardHead, DataTable, EmptyState, Field, Modal, PageHeader, PlanPending, SectionTitle, StatTile, StatusBadge, Tabs, type Column } from '../../components/ui';
 import { FormSheet, PrintButton, SimLabel } from '../../components/ui/extras';
 import { BlockDrawer } from '../../components/domain/BlockDrawer';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
@@ -190,6 +190,21 @@ const strings = {
     notifyImposed: 'TSR {id} in force',
     notifyWithdrawn: 'TSR {id} withdrawn',
     replanReason: 'emergency TSR {id}',
+    ackCount: '{n} acknowledged',
+    acksTitle: 'Loco pilot acknowledgements',
+    acksSub: '{no} · recorded when a loco pilot acknowledges the order on the field portal',
+    acksNone: 'No acknowledgements yet',
+    acksDraft: 'Acknowledgements are recorded once the order is issued.',
+    ackBy: 'Name',
+    ackRole: 'Role',
+    ackTrain: 'Train',
+    ackAt: 'Time',
+    ackAtValue: '{date} {time} IST · {ago}',
+    shareTitle: 'Share order',
+    shareSms: 'Share by SMS',
+    shareMail: 'Share by e-mail',
+    shareNote: 'Opens your SMS / mail app — SAMANVAY sends nothing itself.',
+    shareNeedsIssue: 'Sharing is offered once the order is issued (not for drafts or withdrawn orders).',
   },
   hi: {
     title: 'सावधानी आदेश व प्रपत्र',
@@ -342,6 +357,21 @@ const strings = {
     notifyImposed: 'TSR {id} लागू',
     notifyWithdrawn: 'TSR {id} वापस लिया गया',
     replanReason: 'आपात TSR {id}',
+    ackCount: '{n} पावती',
+    acksTitle: 'लोको पायलट पावती',
+    acksSub: '{no} · फ़ील्ड पोर्टल पर लोको पायलट के आदेश स्वीकारने पर दर्ज',
+    acksNone: 'अभी कोई पावती नहीं',
+    acksDraft: 'आदेश जारी होने के बाद पावती दर्ज होती है।',
+    ackBy: 'नाम',
+    ackRole: 'भूमिका',
+    ackTrain: 'ट्रेन',
+    ackAt: 'समय',
+    ackAtValue: '{date} {time} IST · {ago}',
+    shareTitle: 'आदेश साझा करें',
+    shareSms: 'SMS से साझा करें',
+    shareMail: 'ई-मेल से साझा करें',
+    shareNote: 'आपका SMS / मेल ऐप खुलता है — SAMANVAY स्वयं कुछ नहीं भेजता।',
+    shareNeedsIssue: 'आदेश जारी होने के बाद ही साझा किया जा सकता है (प्रारूप या वापस लिए गए आदेश नहीं)।',
   },
 } as const;
 
@@ -484,7 +514,16 @@ function Forms({ snapshot, role, routeTab }: { snapshot: Snapshot; role: Role; r
     { key: 'speed', header: t('colSpeed'), render: (o) => <div><span className="num strong">{o.speedKmph} km/h</span><div className="tiny muted">{t('normalSpeed', { v: o.normalSpeedKmph })}</div></div> },
     { key: 'valid', header: t('colValid'), hideMobile: true, render: (o) => <span className="small mono">{o.validFrom} → {o.validTo}</span> },
     { key: 'reason', header: t('colReason'), hideMobile: true, render: (o) => <span className="small truncate" style={{ display: 'inline-block', maxWidth: 220 }} title={o.reason}>{o.reason}</span> },
-    { key: 'status', header: t('colStatus'), render: (o) => <StatusBadge status={o.status} /> },
+    {
+      key: 'status',
+      header: t('colStatus'),
+      render: (o) => (
+        <div>
+          <StatusBadge status={o.status} />
+          {(o.status === 'ISSUED' || o.status === 'ACKNOWLEDGED') && <div className="tiny muted num">{t('ackCount', { n: o.ackCount ?? 0 })}</div>}
+        </div>
+      ),
+    },
     {
       key: 'actions',
       header: t('colActions'),
@@ -646,10 +685,13 @@ function Forms({ snapshot, role, routeTab }: { snapshot: Snapshot; role: Role; r
           <CardBody flush>{table}</CardBody>
         </Card>
 
-        <Card>
-          <CardHead title={t('previewTitle')} right={sheet ? <PrintButton label={t('print')} targetId="forms-sheet" /> : undefined} />
-          <CardBody>{sheet ?? <EmptyState title={t('previewEmpty')} />}</CardBody>
-        </Card>
+        <div className="stack" style={{ minWidth: 0 }}>
+          <Card>
+            <CardHead title={t('previewTitle')} right={sheet ? <PrintButton label={t('print')} targetId="forms-sheet" /> : undefined} />
+            <CardBody>{sheet ?? <EmptyState title={t('previewEmpty')} />}</CardBody>
+          </Card>
+          {selOrder && <OrderAcksShare order={selOrder} />}
+        </div>
       </div>
 
       {modal?.kind === 'addTsr' && <TsrModal mode={role === 'control' ? 'add' : 'propose'} snapshot={snapshot} onClose={() => setModal(null)} />}
@@ -682,6 +724,85 @@ function Forms({ snapshot, role, routeTab }: { snapshot: Snapshot; role: Role; r
       <BlockDrawer blockId={drawer.blockId} onClose={() => drawer.close('block')} />
       <TaskDrawer taskId={drawer.taskId} onClose={() => drawer.close('task')} />
     </div>
+  );
+}
+
+/* ── Loco pilot acknowledgements + share links for one order ── */
+const istDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+function OrderAcksShare({ order }: { order: CautionOrder }) {
+  const t = useT(strings);
+  const lang = useLang();
+  const acks = useAppStore((s) => s.acks);
+  const list = useMemo(() => acksForOrder(acks, order.orderNo), [acks, order.orderNo]);
+  const live = order.status === 'ISSUED' || order.status === 'ACKNOWLEDGED';
+  const count = order.ackCount ?? list.length;
+
+  const roleText = (role?: string) => {
+    if (!role) return t('none');
+    const def = ROLES[role as RoleId];
+    return def ? pickLang(def.label, lang) : role.replace(/_/g, ' ').toLowerCase();
+  };
+  const whenText = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return t('ackAtValue', { date: dateLabel(istDate.format(d)), time: hhmm(nowMinuteIST(d)), ago: timeAgo(iso) });
+  };
+
+  const ackCols: Column<CautionAck>[] = [
+    { key: 'by', header: t('ackBy'), render: (a) => <span className="small strong">{a.by}</span> },
+    { key: 'role', header: t('ackRole'), render: (a) => <span className="small">{roleText(a.role)}</span> },
+    { key: 'train', header: t('ackTrain'), render: (a) => (a.trainNo ? <span className="mono small">{a.trainNo}</span> : <span className="muted">{t('none')}</span>) },
+    { key: 'at', header: t('ackAt'), render: (a) => <span className="tiny muted">{whenText(a.at)}</span> },
+  ];
+
+  /* plain order text for the user's own SMS / mail app */
+  const lineText = order.line === 'UP' ? t('lineUp') : order.line === 'DN' ? t('lineDn') : t('lineBoth');
+  const validTo = order.validTo === 'Until Cancelled' ? t('untilCancelled') : order.validTo;
+  const subject = `${order.formType} ${order.orderNo} · ${order.section}`;
+  const text = [
+    `${order.formType} ${order.orderNo}`,
+    `${order.section} · ${lineText} · ${kmRange(order.startKm, order.endKm)}`,
+    `${t('sheetCautionSpeed')}: ${order.speedKmph} km/h`,
+    `${t('sheetValid')}: ${order.validFrom} → ${validTo}`,
+    `${t('sheetReason')}: ${order.reason}`,
+  ].join('\n');
+
+  return (
+    <Card>
+      <CardHead title={t('acksTitle')} sub={t('acksSub', { no: order.orderNo })} right={live ? <Badge tone={count > 0 ? 'ok' : 'gray'}><span className="num">{t('ackCount', { n: count })}</span></Badge> : undefined} />
+      {!live ? (
+        <CardBody tight>
+          <div className="small muted">{t('acksDraft')}</div>
+        </CardBody>
+      ) : list.length === 0 ? (
+        <CardBody tight>
+          <div className="small muted">{t('acksNone')}</div>
+        </CardBody>
+      ) : (
+        <CardBody flush>
+          <DataTable<CautionAck> columns={ackCols} rows={list} rowKey={(a) => a.id} compact maxHeight={260} />
+        </CardBody>
+      )}
+      <CardBody tight>
+        <SectionTitle>{t('shareTitle')}</SectionTitle>
+        {live ? (
+          <>
+            <div className="row-wrap" style={{ gap: 8 }}>
+              <a className="btn btn-sm" href={`sms:?&body=${encodeURIComponent(text)}`}>
+                <MessageSquare size={14} /> {t('shareSms')}
+              </a>
+              <a className="btn btn-sm" href={`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`}>
+                <Mail size={14} /> {t('shareMail')}
+              </a>
+            </div>
+            <div className="tiny muted mt">{t('shareNote')}</div>
+          </>
+        ) : (
+          <div className="small muted">{t('shareNeedsIssue')}</div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

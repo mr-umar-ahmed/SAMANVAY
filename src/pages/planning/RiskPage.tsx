@@ -20,6 +20,7 @@ import { SeedStamp, SimLabel } from '../../components/ui/extras';
 import { Sparkline } from '../../components/viz';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
+import { ArciBandCell, ArciBandLine } from '../../components/domain/PlanExplain';
 import { FEED_SEED } from './planMetrics';
 
 const DEPTS: Dept[] = ['TMS', 'SMMS', 'TDMS'];
@@ -385,7 +386,16 @@ function RiskBody({ snapshot }: { snapshot: Snapshot }) {
           </div>
         ),
       },
-      { key: 'arci', header: t('colArci'), render: (r) => <ArciBar value={r.risk.arci} mandatory={r.risk.mandatory} /> },
+      {
+        key: 'arci',
+        header: t('colArci'),
+        render: (r) => (
+          <div className="stack" style={{ gap: 2 }}>
+            <ArciBar value={r.risk.arci} mandatory={r.risk.mandatory} />
+            <ArciBandCell risk={r.risk} />
+          </div>
+        ),
+      },
       { key: 'band', header: t('colBand'), render: (r) => <UrgencyBadge urgency={r.risk.urgency} /> },
       {
         key: 'floor',
@@ -591,6 +601,12 @@ function RiskBody({ snapshot }: { snapshot: Snapshot }) {
                       <span className="h2 num">{num(active.risk.arci, 3)}</span>
                     </div>
                     <ArciBar value={active.risk.arci} mandatory={active.risk.mandatory} />
+                    <div className="row" style={{ gap: 6, alignItems: 'flex-start' }} data-tour="risk-band">
+                      <div className="grow">
+                        <ArciBandLine risk={active.risk} />
+                      </div>
+                      <SimLabel kind="model" short />
+                    </div>
                     {active.risk.mandatory && <Callout tone="crit">{t('mandatoryNotice')}</Callout>}
 
                     <div className="tiny muted mono">{t('formula', { uplift: active.risk.tsrUplift ? t('upliftPart', { u: num(active.risk.tsrUplift, 2) }) : '' })}</div>

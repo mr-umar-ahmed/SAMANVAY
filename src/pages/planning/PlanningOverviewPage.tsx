@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertOctagon, CalendarRange, CheckSquare, FileText, ListFilter, RefreshCw, Send, ShieldAlert, Sliders, Sparkles } from 'lucide-react';
+import { Activity, AlertOctagon, AlertTriangle, CalendarRange, CheckSquare, FileText, ListFilter, RefreshCw, Send, ShieldAlert, Sliders, Sparkles } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { can } from '../../auth/portals';
 import { workingBlocks } from '../../engine/select';
@@ -20,6 +20,9 @@ import { BarChart, RingGauge } from '../../components/viz';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
 import { ReportDrawer } from '../../components/domain/ReportDrawer';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
+import { SafetyBanner } from '../../components/domain/SafetyBanner';
+import { SolverStamp } from '../../components/domain/SolverStamp';
+import { useConflictRows } from '../../components/domain/planHooks';
 import { KpiStrip } from './KpiStrip';
 import { ALL_KPIS, argMax, argMin, FEED_SEED, FLOW_LABEL, FLOW_TONE, flowState, hourProfile, hourRange, planStrings, type FlowState } from './planMetrics';
 
@@ -85,6 +88,13 @@ const strings = {
     noTasks: 'No works in the register.',
     recentTitle: 'Recent actions',
     recentSub: 'Audit trail recorded on this device',
+    qConflicts: 'Conflicts',
+    qConflictsSub: '{high} high · {medium} medium · {low} low severity',
+    qConflictsBtn: 'Open conflicts',
+    qAnomalies: 'Anomalies flagged',
+    qAnomaliesSub: '{high} high severity · overruns, failure spikes and data',
+    qAnomaliesNone: 'Not computed in this run',
+    qAnomaliesBtn: 'Open integration',
   },
   hi: {
     title: 'योजना अवलोकन',
@@ -147,10 +157,17 @@ const strings = {
     noTasks: 'रजिस्टर में कोई कार्य नहीं।',
     recentTitle: 'हाल की कार्रवाइयाँ',
     recentSub: 'इस डिवाइस पर दर्ज ऑडिट ट्रेल',
+    qConflicts: 'टकराव',
+    qConflictsSub: '{high} उच्च · {medium} मध्यम · {low} निम्न गंभीरता',
+    qConflictsBtn: 'टकराव खोलें',
+    qAnomalies: 'चिह्नित विसंगतियाँ',
+    qAnomaliesSub: '{high} उच्च गंभीरता · ओवररन, विफलता वृद्धि और डेटा',
+    qAnomaliesNone: 'इस run में गणित नहीं',
+    qAnomaliesBtn: 'एकीकरण खोलें',
   },
 } as const;
 
-const FLOW_ORDER: FlowState[] = ['DRAFT', 'AWAITING', 'READY', 'GRANTED', 'LOCKED', 'REFUSED'];
+const FLOW_ORDER: FlowState[] = ['DRAFT', 'AWAITING', 'READY', 'GRANTED', 'LOCKED', 'REFUSED', 'SUPERSEDED'];
 
 export default function PlanningOverviewPage() {
   const snapshot = useAppStore((s) => s.snapshot);
@@ -186,10 +203,14 @@ function OverviewBody({ snapshot }: { snapshot: Snapshot }) {
   const blocks = useMemo(() => workingBlocks(snapshot, approvals), [snapshot, approvals]);
 
   const flowCounts = useMemo(() => {
-    const out: Record<FlowState, number> = { DRAFT: 0, AWAITING: 0, READY: 0, GRANTED: 0, LOCKED: 0, REFUSED: 0 };
+    const out: Record<FlowState, number> = { DRAFT: 0, AWAITING: 0, READY: 0, GRANTED: 0, LOCKED: 0, REFUSED: 0, SUPERSEDED: 0 };
     for (const b of blocks) out[flowState(b)]++;
     return out;
   }, [blocks]);
+
+  const conflictRows = useConflictRows(snapshot, blocks);
+  const sevCount = (s: 'high' | 'medium' | 'low') => conflictRows.filter((c) => c.severity === s).length;
+  const anomalies = snapshot.anomalies;
 
   const ranked = useMemo(() => [...snapshot.tasks].sort((a, b) => b.risk.arci - a.risk.arci), [snapshot]);
   const topTasks = useMemo(() => ranked.slice(0, 10), [ranked]);
@@ -282,6 +303,7 @@ function OverviewBody({ snapshot }: { snapshot: Snapshot }) {
               {dateLabel(snapshot.planStart)} – {dateLabel(planEnd)}
             </Badge>
             <SeedStamp seed={FEED_SEED} runId={planVersion} iterations={weekly.ai.search.iterations} ms={snapshot.timing.ms} />
+            <SolverStamp plan={weekly.ai} />
             <SimLabel kind="solver" />
           </>
         }
@@ -299,6 +321,8 @@ function OverviewBody({ snapshot }: { snapshot: Snapshot }) {
           </>
         }
       />
+
+      <SafetyBanner snapshot={snapshot} plan={weekly.ai} kpis={weekly.kpis} tour="overview-safety" />
 
       <KpiStrip kpis={weekly.kpis} baseKpis={weekly.baseKpis} keys={ALL_KPIS} runId={planVersion} tour="overview-kpis" />
 
@@ -422,7 +446,7 @@ function OverviewBody({ snapshot }: { snapshot: Snapshot }) {
             <CardHead title={t('qState')} sub={t('qStateSub', { n: blocks.length })} icon={<CheckSquare size={16} />} />
             <CardBody>
               <div className="row-wrap">
-                {FLOW_ORDER.filter((f) => flowCounts[f] > 0 || f !== 'REFUSED').map((f) => (
+                {FLOW_ORDER.filter((f) => flowCounts[f] > 0 || (f !== 'REFUSED' && f !== 'SUPERSEDED')).map((f) => (
                   <Badge key={f} tone={FLOW_TONE[f]}>
                     <span className="num">{flowCounts[f]}</span> {tk(FLOW_LABEL[f])}
                   </Badge>
@@ -432,6 +456,33 @@ function OverviewBody({ snapshot }: { snapshot: Snapshot }) {
             <CardFoot>
               <button type="button" className="btn btn-sm" onClick={() => nav('/app/planning/handoff')}>
                 {t('qStateBtn')}
+              </button>
+            </CardFoot>
+          </Card>
+
+          <Card pastel={sevCount('high') ? 'pink' : undefined}>
+            <CardHead title={t('qConflicts')} sub={t('qConflictsSub', { high: sevCount('high'), medium: sevCount('medium'), low: sevCount('low') })} icon={<AlertTriangle size={16} />} />
+            <CardBody>
+              <div className="h2 num">{conflictRows.length}</div>
+            </CardBody>
+            <CardFoot>
+              <button type="button" className="btn btn-sm" onClick={() => nav('/app/planning/weekly')}>
+                {t('qConflictsBtn')}
+              </button>
+            </CardFoot>
+          </Card>
+
+          <Card>
+            <CardHead title={t('qAnomalies')} sub={anomalies ? t('qAnomaliesSub', { high: anomalies.filter((a) => a.severity === 'high').length }) : t('qAnomaliesNone')} icon={<Activity size={16} />} />
+            <CardBody>
+              <div className="h2 num">{anomalies ? anomalies.length : '—'}</div>
+              <div className="mt">
+                <SimLabel kind="model" />
+              </div>
+            </CardBody>
+            <CardFoot>
+              <button type="button" className="btn btn-sm" onClick={() => nav('/app/planning/integration')}>
+                {t('qAnomaliesBtn')}
               </button>
             </CardFoot>
           </Card>

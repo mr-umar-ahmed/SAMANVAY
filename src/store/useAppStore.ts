@@ -14,22 +14,76 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { runPlan as runPlanInWorker } from '../engine/client';
 import { DEFAULT_WEIGHTS, RULES } from '../engine/constants.js';
 import { DEFAULT_ROI_ASSUMPTIONS } from '../engine/roi.js';
-import type { Dept, ExecutionLogRecord, FixedBlockConstraint, InjectSpec, Kpis, KpiDelta, Line, PlanRequest, Rules, Scenario, Snapshot, Task, Weights } from '../engine/types';
-import type { PortalId, SessionUser } from '../auth/portals';
+import type { Block, Dept, ExecutionLogRecord, FixedBlockConstraint, InjectSpec, Kpis, KpiDelta, Line, PlanRequest, Rules, Scenario, Snapshot, Task, WeatherDay, Weights } from '../engine/types';
+import {
+  captureGeometry,
+  corridorInjects,
+  fixedBlocksFromApprovals,
+  mergeFixedBlocks,
+  reconcileApprovals,
+  requisitionInjectSpec,
+  resourceClash,
+  severityFactsAt,
+  workflowState,
+  workingBlocks,
+  workOnlyMinutes,
+  type FixedBlock,
+  type WorkflowState,
+} from '../engine/select';
+import { can, type Capability, type PortalId, type SessionUser } from '../auth/portals';
+import { computeSeverity, suggestCategory, type CategorySuggestion } from '../lib/triage';
+import { hhmm, nowMinuteIST } from '../lib/format';
 import type { Lang } from '../i18n';
 
 /* ───────────────────────── types ───────────────────────── */
 
 export type Theme = 'light' | 'dark' | 'sunlight';
+export type SolverChoice = 'milp' | 'sa';
+export type FeedSystem = 'tms' | 'smms' | 'tdms';
+/** One imported register file (records already validated by importer.normalizeImported). */
+export interface ImportedBatch {
+  corridorId: string;
+  fileName: string;
+  records: Record<string, unknown>[];
+  rejected: number;
+  mode: 'append' | 'replace';
+  at: string;
+}
+export type ImportedFeeds = Partial<Record<FeedSystem, ImportedBatch>>;
+export interface WeatherOverride {
+  corridorId: string;
+  source: 'open-meteo';
+  fetchedAt: string;
+  days: WeatherDay[];
+}
 export type PlanStatus = 'idle' | 'running' | 'ready' | 'error';
 
+/**
+ * Stored approval status. The finer workflow state (DRAFT / PROPOSED /
+ * CONCURRED / GRANTED / LOCKED / REFUSED / SUPERSEDED) is derived by
+ * workflowState() in engine/select.ts from this record.
+ */
 export type ApprovalStatus = 'PROPOSED' | 'GRANTED' | 'REFUSED' | 'LOCKED';
+
+/** Where a block sat when the workflow last touched it (after any Control override). */
+export interface BlockGeometry {
+  day: number;
+  /** ISO date of the day, so the day index can be recomputed against another plan week */
+  date?: string;
+  line: Line;
+  start: number;
+  end: number;
+  taskIds: string[];
+  tasks: { id: string; start: number; end: number }[];
+  departments?: Dept[];
+  capturedAt?: string;
+}
 
 export interface Approval {
   status: ApprovalStatus;
   concur: Partial<Record<Dept, { by: string; at: string; note?: string }>>;
   objections: { dept: Dept; by: string; at: string; reason: string }[];
-  /** window override recorded by Control ("grant with change") */
+  /** window override recorded by Control ("grant with change", approved extension) */
   override?: { start: number; end: number; by: string; at: string };
   incharge?: string;
   resources?: { machineId?: string; crewId?: string };
@@ -40,9 +94,83 @@ export interface Approval {
   lockedBy?: string;
   lockedAt?: string;
   refusal?: { reason: string; count: number; by: string; at: string };
+  /** geometry at the last propose / concur / object / grant / lock / override — sent to the optimiser as a fixed block */
+  geometry?: BlockGeometry;
+  /** a re-plan changed this sent block: the planning cell must send the new block again */
+  supersededAt?: string;
+  /** the approval was moved from this block id to the block holding the same works */
+  rekeyedFrom?: string;
+  /** minutes added to the window by approved extensions */
+  extendedMin?: number;
 }
 
-export type AuditEntityType = 'block' | 'task' | 'report' | 'plan' | 'caution' | 'user' | 'settings' | 'tsr' | 'form' | 'requisition' | 'rbp' | 'escalation' | 'direction';
+/** InjectSpec with the fields the engine honours for requisitions and reports (see types.ts contract). */
+export type InjectSpecV4 = InjectSpec & {
+  corridorId?: string;
+  durationMin?: number;
+  preferredDay?: number;
+  preferredWindow?: 'night' | 'day' | 'any';
+  machine?: string | null;
+  blockKind?: 'TRAFFIC' | 'POWER' | 'TRAFFIC + POWER' | 'DISCONNECTION';
+  requires?: Array<'POWER_BLOCK' | 'DISCONNECTION'>;
+  dependsOn?: string[];
+  coRequireWith?: string[];
+  replacesTaskId?: string;
+};
+
+export interface ExtensionRequest {
+  id: string;
+  blockId: string;
+  extraMin: number;
+  reason: string;
+  by: string;
+  role: string;
+  at: string;
+  status: 'PENDING' | 'APPROVED' | 'REFUSED';
+  decidedBy?: string;
+  decidedAt?: string;
+  note?: string;
+}
+
+export interface SiteMessage {
+  id: string;
+  blockId: string;
+  text: string;
+  by: string;
+  at: string;
+  role?: string;
+  /** field → Control, or Control's reply */
+  from?: 'field' | 'control';
+  /** id of the message this replies to */
+  replyTo?: string;
+}
+
+export interface CautionAck {
+  id: string;
+  orderNo: string;
+  by: string;
+  at: string;
+  role?: string;
+  trainNo?: string;
+}
+
+/** What a corridor switch would clear (for the confirmation dialog). */
+export interface CorridorSwitchImpact {
+  approvals: number;
+  sentOrHeld: number;
+  granted: number;
+  executionRecords: number;
+  forms: number;
+  powerBlocks: number;
+  extensions: number;
+  handoverNotes: number;
+  scenario: boolean;
+  machineRemovals: number;
+  pinned: number;
+  excluded: number;
+}
+
+export type AuditEntityType = 'block' | 'task' | 'report' | 'plan' | 'caution' | 'user' | 'settings' | 'tsr' | 'form' | 'requisition' | 'rbp' | 'escalation' | 'direction' | 'feed';
 
 export interface AuditEntry {
   id: string;
@@ -60,7 +188,10 @@ export interface ExecItem {
   label: string;
   dept: Dept;
   workType: string;
+  /** work-only minutes the plan allotted (no setup / clearance) */
   plannedMin: number;
+  /** uncalibrated standard minutes for the work — what duration calibration compares against */
+  baseMin?: number;
   done: boolean;
   actualMin?: number;
   remarks?: string;
@@ -85,6 +216,8 @@ export interface ExecRecord {
   by: string;
   source: 'field' | 'control';
   updatedAt: string;
+  /** minutes added by extensions Control approved during the possession */
+  extendedMin?: number;
 }
 
 export type ReportCategory = 'track' | 'signal' | 'ohe' | 'lc' | 'fire' | 'obstruction' | 'other';
@@ -102,6 +235,11 @@ export interface HazardReport {
   description: string;
   category: ReportCategory;
   severity?: 'low' | 'medium' | 'high';
+  /** severity computed by the points table in lib/triage (the reporter did not choose one) */
+  severityAuto?: boolean;
+  severityReasons?: string[];
+  /** keyword suggestion from lib/triage when it differs from the reporter's category */
+  suggestedCategory?: CategorySuggestion | null;
   /** small JPEG data URL for lists; the full photo lives in IndexedDB under photoId */
   thumbDataUrl?: string;
   photoId?: string;
@@ -124,13 +262,15 @@ export interface HazardReport {
 
 export interface IntakeTask {
   id: string;
-  spec: InjectSpec;
+  spec: InjectSpecV4;
   label: string;
   dept: Dept;
   submittedBy: string;
   role: string;
   at: string;
   source: 'BDMS-INTAKE' | 'FIELD' | 'CITIZEN' | 'EMERGENCY-TSR' | 'REQUISITION';
+  /** corridor the work belongs to — only the active corridor's intake is sent to the optimiser */
+  corridorId?: string;
 }
 
 export type RequisitionStatus = 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'ACCEPTED' | 'WITHDRAWN';
@@ -161,6 +301,16 @@ export interface Requisition {
   remarks?: string;
   tsrKmph?: number | null;
   daysOverdue?: number;
+  /** the work needs an OHE power block (TRD isolation) */
+  needsPowerBlock?: boolean;
+  /** the work needs an S&T disconnection (T/351) */
+  needsDisconnection?: boolean;
+  /** requisitions (ids) that must be done before this one */
+  dependsOnReqIds?: string[];
+  /** requisitions (ids) that must share the block with this one */
+  coRequireReqIds?: string[];
+  /** register task the requisition was raised from (the accepted work replaces it) */
+  sourceTaskId?: string;
   status: RequisitionStatus;
   validation: string[];
   cellRemarks?: string;
@@ -212,6 +362,8 @@ export interface FormRecord {
   by: string;
   at: string;
   reason?: string;
+  /** loco pilots who acknowledged the order (the status stays ISSUED) */
+  acknowledgements?: { by: string; at: string; role?: string; trainNo?: string }[];
 }
 
 export interface ManualTsr {
@@ -276,7 +428,8 @@ export interface CandidatePatch {
   scenario?: ScenarioState | null;
   pinnedTaskIds?: string[];
   excludedTaskIds?: string[];
-  fixedBlocks?: FixedBlockConstraint[];
+  /** merged with the fixed blocks derived from approvals; the patch wins for the same id */
+  fixedBlocks?: (FixedBlockConstraint | FixedBlock)[];
 }
 
 export interface Candidate {
@@ -302,7 +455,14 @@ export interface AppState {
   language: Lang;
   setLanguage: (l: Lang) => void;
   corridorId: string;
+  /** switch corridor: clears approvals, execution records, forms, power blocks, scenario (incl. machine removals), pins, extensions */
   setCorridor: (id: string) => void;
+  /** what setCorridor would clear — show it in a confirmation before switching */
+  corridorSwitchImpact: () => CorridorSwitchImpact;
+  /** system notifications on this device when the tab is hidden (browser permission) */
+  deviceNotifications: boolean;
+  enableDeviceNotifications: () => Promise<NotificationPermission | 'unsupported'>;
+  disableDeviceNotifications: () => void;
   audioMuted: boolean;
   setAudioMuted: (m: boolean) => void;
   preloaderSeen: boolean;
@@ -318,6 +478,16 @@ export interface AppState {
   myReportIds: string[];
 
   // planning parameters
+  /** 'milp' = exact MILP (HiGHS) construction polished by simulated annealing; 'sa' = greedy + simulated annealing */
+  solver: SolverChoice;
+  setSolver: (s: SolverChoice) => void;
+  /** records imported from TMS / SMMS / TDMS files for one corridor (validated on the main thread) */
+  importedFeeds: ImportedFeeds;
+  importFeed: (system: FeedSystem, batch: Omit<ImportedBatch, 'at'>) => void;
+  clearImportedFeed: (system: FeedSystem) => void;
+  /** live forecast fetched for a corridor (laid over the seeded weather day by day) */
+  weatherOverride: WeatherOverride | null;
+  setWeatherOverride: (w: WeatherOverride | null) => void;
   weights: Weights;
   rules: Rules;
   iterations: number;
@@ -347,7 +517,8 @@ export interface AppState {
   lastPlannedAt: string | null;
   previousResult: PreviousResult | null;
   pendingRerun: boolean;
-  runPlan: (opts?: { reason?: string }) => Promise<void>;
+  /** silent: re-run triggered by another tab — reconcile approvals but do not audit / notify again */
+  runPlan: (opts?: { reason?: string; silent?: boolean }) => Promise<void>;
   candidate: Candidate | null;
   candidateStatus: 'idle' | 'running' | 'error';
   candidateProgress: string;
@@ -356,16 +527,24 @@ export interface AppState {
   promoteCandidate: () => void;
   discardCandidate: () => void;
 
-  // JPO workflow
+  // JPO workflow — every guarded action returns true when it changed state, false (with a toast saying why) when refused
   approvals: Record<string, Approval>;
-  proposeBlocks: (blockIds: string[]) => void;
-  concur: (blockId: string, dept: Dept, note?: string) => void;
-  object: (blockId: string, dept: Dept, reason: string) => void;
-  grant: (blockId: string, override?: { start: number; end: number }) => void;
-  refuse: (blockId: string, reason: string) => void;
-  lock: (blockId: string) => void;
-  setIncharge: (blockId: string, name: string) => void;
-  setResources: (blockId: string, r: { machineId?: string; crewId?: string }) => void;
+  /** planning (`plan`): send DRAFT / REFUSED blocks for concurrence; returns how many were sent */
+  proposeBlocks: (blockIds: string[]) => number;
+  /** `concur:<DEPT>`, or `plan` with a note (recorded on behalf); only on PROPOSED / partly concurred blocks */
+  concur: (blockId: string, dept: Dept, note?: string) => boolean;
+  object: (blockId: string, dept: Dept, reason: string) => boolean;
+  /** `grant`; only on CONCURRED blocks */
+  grant: (blockId: string, override?: { start: number; end: number }) => boolean;
+  /** `grant`; only on PROPOSED / CONCURRED blocks */
+  refuse: (blockId: string, reason: string) => boolean;
+  /** `lock`; only on GRANTED blocks */
+  lock: (blockId: string) => boolean;
+  /** `lock`; locks every GRANTED block in the list with one notification per department; returns how many */
+  lockBlocks: (blockIds: string[]) => number;
+  setIncharge: (blockId: string, name: string) => boolean;
+  /** refuses (toast) a machine or gang already working in an overlapping block */
+  setResources: (blockId: string, r: { machineId?: string; crewId?: string }) => boolean;
   resetApprovals: () => void;
   handoverNotes: Record<string, string>;
   setHandoverNote: (date: string, note: string) => void;
@@ -397,21 +576,34 @@ export interface AppState {
 
   // execution
   executionLog: ExecRecord[];
-  startPossession: (rec: Omit<ExecRecord, 'status' | 'by' | 'updatedAt' | 'actualStart' | 'source'> & { actualStart: number; source?: 'field' | 'control' }) => void;
-  markItemDone: (blockId: string, taskId: string, actualMin: number, remarks?: string) => void;
-  clearPossession: (blockId: string, data: { actualEnd: number; overrunCause?: string; speedOnLifting?: number | null; source?: 'field' | 'control' }) => void;
+  /** `execute`; only GRANTED / LOCKED blocks. Item planned minutes are replaced by work-only minutes from the plan. */
+  startPossession: (rec: Omit<ExecRecord, 'status' | 'by' | 'updatedAt' | 'actualStart' | 'source'> & { actualStart: number; source?: 'field' | 'control' }) => boolean;
+  markItemDone: (blockId: string, taskId: string, actualMin: number, remarks?: string) => boolean;
+  clearPossession: (blockId: string, data: { actualEnd: number; overrunCause?: string; speedOnLifting?: number | null; source?: 'field' | 'control' }) => boolean;
   resetExecution: () => void;
-  messages: { id: string; blockId: string; text: string; by: string; at: string }[];
+  /** extension requests from site (field / SSE) decided by Control */
+  extensions: ExtensionRequest[];
+  /** `execute`; block GRANTED / LOCKED; notifies Control */
+  requestExtension: (blockId: string, req: { extraMin: number; reason: string }) => ExtensionRequest | null;
+  /** `grant`; approve → window end += extraMin (override + fixed geometry); notifies field + departments */
+  decideExtension: (blockId: string, requestId: string, approve: boolean, note?: string) => boolean;
+  messages: SiteMessage[];
   messageControl: (blockId: string, text: string) => void;
-  acks: { id: string; orderNo: string; by: string; at: string }[];
-  ackCaution: (orderNo: string) => void;
+  /** Control (`grant` or `execute` in the control / division portal) replies to a site message; notifies field */
+  replyToMessage: (messageId: string, text: string) => boolean;
+  acks: CautionAck[];
+  /** loco pilot acknowledgement: recorded once per person, added to the form record (status unchanged), notifies Control */
+  ackCaution: (orderNo: string, trainNo?: string) => boolean;
 
   // requisitions (BDMS-style)
   requisitions: Requisition[];
   saveRequisition: (r: Omit<Requisition, 'id' | 'no' | 'at' | 'updatedAt' | 'history' | 'by' | 'role'> & { id?: string }) => Requisition;
   submitRequisition: (id: string) => void;
-  returnRequisition: (id: string, remarks: string) => void;
+  /** `plan`; SUBMITTED only */
+  returnRequisition: (id: string, remarks: string) => boolean;
+  /** `plan`; SUBMITTED only; the InjectSpec carries duration, preferred day/window, machine, block kind, requirements, dependencies, corridor, replaced task */
   acceptRequisition: (id: string) => IntakeTask | null;
+  /** removes the injected work of an accepted requisition (call runPlan after) */
   withdrawRequisition: (id: string) => void;
 
   // hazard reports (citizen + field + loco pilot)
@@ -463,16 +655,141 @@ const DEFAULT_CORRIDOR = 'NCR_NDLS_CNB';
 
 const emptyApproval = (): Approval => ({ status: 'PROPOSED', concur: {}, objections: [] });
 
-/** Records from the UI execution log that the engine can learn duration factors from. */
-function executionRecordsForEngine(log: ExecRecord[]): ExecutionLogRecord[] {
+/**
+ * Records from the UI execution log that the engine can learn duration
+ * factors from. Planned minutes are work-only standard minutes (baseMin, or
+ * the task's baseDurationMin for records made before baseMin existed) — the
+ * same basis as the seeded history — never the whole block window.
+ */
+export function executionRecordsForEngine(log: ExecRecord[], tasks?: Pick<Task, 'id' | 'baseDurationMin' | 'durationMin'>[] | null): ExecutionLogRecord[] {
+  const byId = new Map((tasks ?? []).map((t) => [t.id, t]));
   const out: ExecutionLogRecord[] = [];
   for (const rec of log) {
+    const daysAgo = Math.max(0, Math.round((Date.now() - Date.parse(rec.updatedAt || rec.date)) / 86400000)) || 0;
     for (const it of rec.items) {
       if (!it.done || !it.actualMin) continue;
-      out.push({ workType: it.workType, plannedMin: it.plannedMin, actualMin: it.actualMin, daysAgo: 0, overrunReason: it.actualMin > it.plannedMin * 1.1 ? rec.overrunCause || 'Overrun (execution log)' : null });
+      const t = byId.get(it.taskId);
+      const planned = it.baseMin ?? (t ? Math.round(t.baseDurationMin ?? t.durationMin) : it.plannedMin);
+      if (!planned || planned <= 0) continue;
+      out.push({ workType: it.workType, plannedMin: planned, actualMin: it.actualMin, daysAgo, overrunReason: it.actualMin > planned * 1.1 ? rec.overrunCause || 'Overrun (execution log)' : null });
     }
   }
   return out;
+}
+
+/* bilingual refusal toasts (store messages follow the UI language: EN / HI) */
+const TX = {
+  en: {
+    signIn: 'Sign in to do this',
+    noPlan: 'Only the block planning cell can do this',
+    noConcur: 'Your role cannot record {dept} concurrence',
+    onBehalfNote: 'Concurrence on behalf of {dept} needs a note (phone / paper reference)',
+    deptNotIn: '{dept} has no work in block {id}',
+    notSent: 'Block {id} has not been sent for concurrence yet',
+    superseded: 'Block {id} was changed by a re-plan — the planning cell must send the new block again',
+    concurClosed: 'Concurrence on block {id} is closed — it is {state}',
+    noGrant: 'Your role cannot grant or refuse possessions',
+    notConcurred: 'Block {id} cannot be granted before every department concurs ({missing} pending)',
+    grantState: 'Only a concurred block can be granted — block {id} is {state}',
+    badWindow: 'The changed window must lie inside the day and end after it starts',
+    refuseState: 'Only a proposed or concurred block can be refused — block {id} is {state}',
+    noLock: 'Your role cannot lock blocks',
+    lockState: 'Only a granted block can be locked — block {id} is {state}',
+    notInPlan: 'Block {id} is not in the current plan',
+    noResources: 'Your role cannot assign machines or gangs',
+    clash: '{res} is already working in block {other} ({window}) — double booking refused',
+    noExecute: 'Your role cannot record possession start, work done or line clear',
+    notGranted: 'Block {id} is not granted — the possession cannot start',
+    alreadyStarted: 'The possession of block {id} is already recorded',
+    notStarted: 'No possession in progress on block {id}',
+    ackDup: 'You have already acknowledged {no}',
+    extInvalid: 'Ask for 5 to 240 minutes, with a reason',
+    extState: 'An extension can be asked only for a granted block',
+    extPending: 'An extension for block {id} is already waiting for Control',
+    extMidnight: 'The extended block would run past 24:00',
+    extNotFound: 'That extension request is not waiting for a decision',
+    noReply: 'Only Control can reply to site messages',
+    emptyText: 'Write the message first',
+    msgNotFound: 'Message not found',
+    reqState: 'Requisition {no} is {status} — only a submitted requisition can be accepted or returned',
+  },
+  hi: {
+    signIn: 'यह करने के लिए साइन इन करें',
+    noPlan: 'यह केवल ब्लॉक योजना प्रकोष्ठ कर सकता है',
+    noConcur: 'आपकी भूमिका {dept} की सहमति दर्ज नहीं कर सकती',
+    onBehalfNote: '{dept} की ओर से सहमति के लिए टिप्पणी (फ़ोन / पत्र संदर्भ) आवश्यक है',
+    deptNotIn: 'ब्लॉक {id} में {dept} का कोई कार्य नहीं है',
+    notSent: 'ब्लॉक {id} अभी सहमति के लिए नहीं भेजा गया है',
+    superseded: 'ब्लॉक {id} पुनः योजना से बदल गया — योजना प्रकोष्ठ नया ब्लॉक फिर से भेजे',
+    concurClosed: 'ब्लॉक {id} पर सहमति बंद है — यह {state} है',
+    noGrant: 'आपकी भूमिका पज़ेशन प्रदान या अस्वीकार नहीं कर सकती',
+    notConcurred: 'सभी विभागों की सहमति से पहले ब्लॉक {id} प्रदान नहीं हो सकता ({missing} शेष)',
+    grantState: 'केवल सहमत ब्लॉक प्रदान हो सकता है — ब्लॉक {id} {state} है',
+    badWindow: 'बदली गई अवधि दिन के भीतर हो और शुरू होने के बाद समाप्त हो',
+    refuseState: 'केवल प्रस्तावित या सहमत ब्लॉक अस्वीकार हो सकता है — ब्लॉक {id} {state} है',
+    noLock: 'आपकी भूमिका ब्लॉक लॉक नहीं कर सकती',
+    lockState: 'केवल प्रदान किया गया ब्लॉक लॉक हो सकता है — ब्लॉक {id} {state} है',
+    notInPlan: 'ब्लॉक {id} वर्तमान योजना में नहीं है',
+    noResources: 'आपकी भूमिका मशीन या गैंग नियत नहीं कर सकती',
+    clash: '{res} पहले से ब्लॉक {other} ({window}) में लगा है — दोहरी बुकिंग अस्वीकृत',
+    noExecute: 'आपकी भूमिका पज़ेशन शुरू, कार्य पूर्ण या लाइन क्लियर दर्ज नहीं कर सकती',
+    notGranted: 'ब्लॉक {id} प्रदान नहीं हुआ — पज़ेशन शुरू नहीं हो सकता',
+    alreadyStarted: 'ब्लॉक {id} का पज़ेशन पहले से दर्ज है',
+    notStarted: 'ब्लॉक {id} पर कोई पज़ेशन जारी नहीं है',
+    ackDup: 'आप {no} पहले ही स्वीकार कर चुके हैं',
+    extInvalid: '5 से 240 मिनट माँगें, कारण सहित',
+    extState: 'विस्तार केवल प्रदान किए गए ब्लॉक के लिए माँगा जा सकता है',
+    extPending: 'ब्लॉक {id} का विस्तार अनुरोध पहले से नियंत्रण के पास है',
+    extMidnight: 'विस्तारित ब्लॉक 24:00 के बाद तक चलेगा',
+    extNotFound: 'यह विस्तार अनुरोध निर्णय की प्रतीक्षा में नहीं है',
+    noReply: 'साइट संदेशों का उत्तर केवल नियंत्रण दे सकता है',
+    emptyText: 'पहले संदेश लिखें',
+    msgNotFound: 'संदेश नहीं मिला',
+    reqState: 'माँग-पत्र {no} {status} है — केवल प्रस्तुत माँग-पत्र स्वीकार या लौटाया जा सकता है',
+  },
+} as const;
+type TxKey = keyof typeof TX.en;
+
+const STATE_WORD: Record<WorkflowState, { en: string; hi: string }> = {
+  DRAFT: { en: 'a draft', hi: 'ड्राफ़्ट' },
+  PROPOSED: { en: 'awaiting concurrence', hi: 'सहमति की प्रतीक्षा में' },
+  CONCURRED: { en: 'concurred', hi: 'सहमत' },
+  GRANTED: { en: 'granted', hi: 'प्रदान' },
+  LOCKED: { en: 'locked', hi: 'लॉक' },
+  REFUSED: { en: 'refused', hi: 'अस्वीकृत' },
+  SUPERSEDED: { en: 'changed by a re-plan', hi: 'पुनः योजना से बदला हुआ' },
+};
+
+function txt(lang: Lang, key: TxKey, params: Record<string, string | number> = {}): string {
+  const dict = lang === 'hi' ? TX.hi : TX.en;
+  return dict[key].replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? ''));
+}
+
+/** Refuse an action: toast why (in the UI language) and return false. */
+function deny(get: () => AppState, key: TxKey, params: Record<string, string | number> = {}): false {
+  const s = get();
+  s.toast({ title: txt(s.language, key, params), tone: 'warn' });
+  return false;
+}
+
+const stateWord = (get: () => AppState, st: WorkflowState) => STATE_WORD[st][get().language === 'hi' ? 'hi' : 'en'];
+
+/** Concurrence / objection is open only on sent blocks that are not yet granted (partly concurred included). */
+function checkConcurOpen(get: () => AppState, blockId: string, state: WorkflowState): boolean {
+  if (state === 'PROPOSED' || state === 'CONCURRED') return true;
+  if (state === 'DRAFT') return deny(get, 'notSent', { id: blockId });
+  if (state === 'SUPERSEDED') return deny(get, 'superseded', { id: blockId });
+  return deny(get, 'concurClosed', { id: blockId, state: stateWord(get, state) });
+}
+
+const deptPortals = (depts: Dept[]): PortalId[] => depts.map((d) => d.toLowerCase() as PortalId);
+
+/** Who may record the in-charge / machine / gang of a block. */
+const RESOURCE_CAPS: Capability[] = ['plan', 'intake', 'execute', 'grant'];
+
+/** Plan-affecting key of a request (used to decide whether a re-plan is needed). */
+export function planRequestKey(req: PlanRequest): string {
+  return JSON.stringify(req);
 }
 
 export function deptForCategory(cat: ReportCategory): Dept | null {
@@ -491,23 +808,24 @@ export function deptForCategory(cat: ReportCategory): Dept | null {
   }
 }
 
-/** Build the worker request from the store's parameters (+ an optional candidate patch). */
-function buildRequest(s: AppState, patch: CandidatePatch = {}): PlanRequest {
+/**
+ * Build the worker request from the store's parameters (+ an optional candidate patch).
+ *  - injects: scenario injects + intake tasks and converted reports of the ACTIVE corridor only
+ *  - fixedBlocks: every CONCURRED / GRANTED / LOCKED approval and every possession in progress,
+ *    at its stored geometry and with its block id (merged with patch.fixedBlocks; the patch wins)
+ */
+export function buildRequest(s: Pick<AppState, 'scenario' | 'intakeTasks' | 'reports' | 'corridorId' | 'executionLog' | 'weights' | 'rules' | 'iterations' | 'pinnedTaskIds' | 'excludedTaskIds' | 'approvals' | 'snapshot'> & Partial<Pick<AppState, 'solver' | 'importedFeeds' | 'weatherOverride'>>, patch: CandidatePatch = {}): PlanRequest {
   const scenarioState = patch.scenario === undefined ? s.scenario : patch.scenario;
-  const injected: InjectSpec[] = [
-    ...(scenarioState?.scenario.injectTasks ?? []),
-    ...s.intakeTasks.map((t) => t.spec),
-    ...s.reports
-      .filter((r) => r.status === 'TASK' && r.taskSpec && r.corridorId === s.corridorId && !r.intakeTaskId)
-      .map((r) => ({ ...r.taskSpec!, sourceId: r.taskSpec!.sourceId ?? `REPORT/${r.id}` })),
-  ];
+  const injected: InjectSpec[] = [...(scenarioState?.scenario.injectTasks ?? []), ...corridorInjects(s.intakeTasks, s.reports, s.corridorId)];
+  const planStart = s.snapshot && s.snapshot.corridor.id === s.corridorId ? s.snapshot.planStart : null;
   const scenario: Scenario = {
     ...(scenarioState?.scenario ?? {}),
     name: scenarioState?.name,
     id: scenarioState?.presetId ?? undefined,
     injectTasks: injected,
-    extraExecution: executionRecordsForEngine(s.executionLog),
+    extraExecution: executionRecordsForEngine(s.executionLog, s.snapshot?.tasks),
   };
+  const fixed = mergeFixedBlocks(fixedBlocksFromApprovals(s.approvals, s.executionLog, { planStart, corridorId: s.corridorId }), patch.fixedBlocks);
   return {
     corridorId: s.corridorId,
     weights: { ...s.weights, ...(patch.weights ?? {}) },
@@ -516,8 +834,115 @@ function buildRequest(s: AppState, patch: CandidatePatch = {}): PlanRequest {
     scenario,
     pinnedTaskIds: patch.pinnedTaskIds ?? s.pinnedTaskIds,
     excludedTaskIds: patch.excludedTaskIds ?? s.excludedTaskIds,
-    fixedBlocks: patch.fixedBlocks,
+    fixedBlocks: fixed.length ? fixed : undefined,
+    solver: s.solver ?? 'milp',
+    imported: importedForCorridor(s.importedFeeds, s.corridorId),
+    weather: s.weatherOverride && s.weatherOverride.corridorId === s.corridorId ? s.weatherOverride.days : null,
   };
+}
+
+/** Imported records of the active corridor, in the shape mergeImported() takes ({ tms: { records, mode } }). */
+function importedForCorridor(feeds: ImportedFeeds | undefined, corridorId: string): PlanRequest['imported'] {
+  if (!feeds) return null;
+  const out: NonNullable<PlanRequest['imported']> = {};
+  for (const sys of ['tms', 'smms', 'tdms'] as const) {
+    const b = feeds[sys];
+    if (b && b.corridorId === corridorId && b.records.length) out[sys] = { records: b.records, mode: b.mode };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Raw engine block, approval and derived workflow state of one block id. */
+function blockCtx(s: AppState, blockId: string): { raw: Block | null; a: Approval | null; departments: Dept[]; state: WorkflowState } {
+  const raw = s.snapshot?.result.weekly.ai.blocks.find((b) => b.id === blockId) ?? null;
+  const a = s.approvals[blockId] ?? null;
+  const departments = raw?.departments ?? a?.geometry?.departments ?? [];
+  return { raw, a, departments, state: workflowState(a, departments) };
+}
+
+/**
+ * Show a system notification for an item addressed to this device's user when
+ * the tab is hidden (service-worker registration first, page Notification as
+ * fallback). Nothing is sent anywhere — no SMS, no e-mail, no push server.
+ */
+export function deviceNotifyIfHidden(item: PushedNotification, st: Pick<AppState, 'deviceNotifications' | 'user'>): void {
+  if (!st.deviceNotifications || typeof document === 'undefined' || !document.hidden) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const u = st.user;
+  if (!u || !item.portals.includes(u.portal)) return;
+  if (item.dept && u.dept && item.dept !== u.dept) return;
+  const opts: NotificationOptions = { body: item.body, tag: item.id, data: { route: item.route ?? null } };
+  void (async () => {
+    try {
+      const reg = typeof navigator !== 'undefined' && navigator.serviceWorker ? await navigator.serviceWorker.getRegistration() : undefined;
+      if (reg) {
+        await reg.showNotification(item.title, opts);
+        return;
+      }
+    } catch {
+      /* fall through to the page notification */
+    }
+    try {
+      const n = new Notification(item.title, opts);
+      n.onclick = () => {
+        window.focus();
+        if (item.route) window.location.assign(item.route);
+        n.close();
+      };
+    } catch {
+      /* this browser only allows notifications from a service worker */
+    }
+  })();
+}
+
+type StoreGet = () => AppState;
+type StoreSet = (partial: Partial<AppState>) => void;
+
+/**
+ * After a new working snapshot: re-attach approvals of fixed / held blocks
+ * whose id changed to the block with the same works (moving their execution
+ * record, power-block record, extensions and messages with them), and mark
+ * sent proposals whose block no longer exists as superseded (kept, audited,
+ * planning notified). silent: the same reconciliation made by another tab.
+ */
+function reconcileAfterPlan(get: StoreGet, set: StoreSet, snapshot: Snapshot, silent = false) {
+  const st = get();
+  if (snapshot.corridor.id !== st.corridorId) return;
+  const started = new Set(st.executionLog.filter((r) => r.status === 'IN_PROGRESS' && r.corridorId === st.corridorId).map((r) => r.blockId));
+  const at = now();
+  // approvals recorded before geometry existed: capture it from the block while it is still in the plan
+  let approvals = st.approvals;
+  let backfilled = false;
+  for (const b of snapshot.result.weekly.ai.blocks) {
+    const a = approvals[b.id];
+    if (!a || a.geometry || (!a.proposedAt && a.status === 'PROPOSED')) continue;
+    if (!backfilled) approvals = { ...approvals };
+    approvals[b.id] = { ...a, geometry: captureGeometry(b, a.override, at) };
+    backfilled = true;
+  }
+  const rec = reconcileApprovals(approvals, snapshot.result.weekly.ai.blocks, at, started);
+  if (!rec.superseded.length && !rec.rekeyed.length && !rec.orphaned.length) {
+    if (backfilled) set({ approvals });
+    return;
+  }
+  const move = new Map(rec.rekeyed.map((r) => [r.from, r.to]));
+  const re = (id: string) => move.get(id) ?? id;
+  const patch: Partial<AppState> = { approvals: rec.approvals };
+  if (move.size) {
+    patch.executionLog = st.executionLog.map((r) => (move.has(r.blockId) ? { ...r, blockId: re(r.blockId) } : r));
+    patch.powerBlocks = Object.fromEntries(Object.entries(st.powerBlocks).map(([k, v]) => [re(k), v]));
+    patch.extensions = st.extensions.map((e) => (move.has(e.blockId) ? { ...e, blockId: re(e.blockId) } : e));
+    patch.messages = st.messages.map((m) => (move.has(m.blockId) ? { ...m, blockId: re(m.blockId) } : m));
+  }
+  set(patch);
+  if (silent) return;
+  for (const r of rec.rekeyed) get().addAudit({ action: 'APPROVAL_REKEYED', entityType: 'block', entityId: r.to, detail: `Same works re-planned: approval moved from ${r.from}`, by: 'System', role: 'SYSTEM' });
+  for (const id of rec.superseded) get().addAudit({ action: 'PROPOSAL_SUPERSEDED', entityType: 'block', entityId: id, detail: 'Block changed by re-plan — concurrence must be requested again', by: 'System', role: 'SYSTEM' });
+  for (const id of rec.orphaned) get().addAudit({ action: 'HELD_BLOCK_DROPPED', entityType: 'block', entityId: id, detail: `${rec.approvals[id]?.status ?? ''} block not found in the new plan`, by: 'System', role: 'SYSTEM' });
+  const n = rec.superseded.length;
+  if (n) get().notify({ portals: ['planning'], kind: 'WARNING', title: `${n} proposed block${n > 1 ? 's' : ''} changed after re-plan — send again`, body: rec.superseded.slice(0, 4).join(', '), route: '/app/planning/handoff' });
+  const o = rec.orphaned.length;
+  if (o) get().notify({ portals: ['control', 'planning'], kind: 'CRITICAL', title: `${o} granted block${o > 1 ? 's' : ''} no longer in the plan`, body: rec.orphaned.slice(0, 4).join(', '), route: '/app/control/board' });
 }
 
 /** Demo reports so the incident queues are not empty on first run (marked seeded: true). */
@@ -818,10 +1243,56 @@ export const useAppStore = create<AppState>()(
       setLanguage: (l) => set({ language: l }),
       corridorId: DEFAULT_CORRIDOR,
       setCorridor: (id) => {
-        if (id === get().corridorId) return;
-        set({ corridorId: id, approvals: {}, executionLog: [], forms: {}, powerBlocks: {}, candidate: null, pinnedTaskIds: [], excludedTaskIds: [], handoverNotes: {}, dataIssueStatus: {} });
-        get().addAudit({ action: 'CORRIDOR_CHANGED', entityType: 'settings', entityId: id });
+        const s = get();
+        if (id === s.corridorId) return;
+        const impact = s.corridorSwitchImpact();
+        // approvals, execution records, forms, power blocks, the scenario (with its machine removals),
+        // pins / closures and extensions all belong to the corridor being left
+        set({ corridorId: id, approvals: {}, executionLog: [], forms: {}, powerBlocks: {}, candidate: null, pinnedTaskIds: [], excludedTaskIds: [], handoverNotes: {}, dataIssueStatus: {}, scenario: null, extensions: [] });
+        get().addAudit({
+          action: 'CORRIDOR_CHANGED',
+          entityType: 'settings',
+          entityId: id,
+          detail: `from ${s.corridorId} · cleared ${impact.approvals} approvals, ${impact.executionRecords} execution records, ${impact.forms} forms${impact.scenario ? `, scenario "${s.scenario?.name ?? ''}"` : ''}${impact.machineRemovals ? `, ${impact.machineRemovals} machine removals` : ''}`,
+        });
         void get().runPlan({ reason: 'corridor changed' });
+      },
+      corridorSwitchImpact: () => {
+        const s = get();
+        const list = Object.values(s.approvals);
+        return {
+          approvals: list.length,
+          sentOrHeld: list.filter((a) => !!a.proposedAt || a.status !== 'PROPOSED').length,
+          granted: list.filter((a) => a.status === 'GRANTED' || a.status === 'LOCKED').length,
+          executionRecords: s.executionLog.length,
+          forms: Object.keys(s.forms).length,
+          powerBlocks: Object.keys(s.powerBlocks).length,
+          extensions: s.extensions.length,
+          handoverNotes: Object.keys(s.handoverNotes).length,
+          scenario: !!s.scenario,
+          machineRemovals: s.scenario?.scenario.removeMachines?.length ?? 0,
+          pinned: s.pinnedTaskIds.length,
+          excluded: s.excludedTaskIds.length,
+        };
+      },
+      deviceNotifications: false,
+      enableDeviceNotifications: async () => {
+        if (typeof window === 'undefined' || typeof Notification === 'undefined') return 'unsupported';
+        let p: NotificationPermission = Notification.permission;
+        if (p === 'default') {
+          try {
+            p = await Notification.requestPermission();
+          } catch {
+            p = Notification.permission;
+          }
+        }
+        set({ deviceNotifications: p === 'granted' });
+        get().addAudit({ action: p === 'granted' ? 'DEVICE_NOTIFICATIONS_ON' : 'DEVICE_NOTIFICATIONS_DENIED', entityType: 'settings', entityId: 'deviceNotifications', detail: `Browser permission: ${p}` });
+        return p;
+      },
+      disableDeviceNotifications: () => {
+        set({ deviceNotifications: false });
+        get().addAudit({ action: 'DEVICE_NOTIFICATIONS_OFF', entityType: 'settings', entityId: 'deviceNotifications' });
       },
       audioMuted: true,
       setAudioMuted: (m) => set({ audioMuted: m }),
@@ -838,6 +1309,28 @@ export const useAppStore = create<AppState>()(
       myReportIds: [],
 
       /* planning parameters */
+      solver: 'milp',
+      setSolver: (sv) => {
+        set({ solver: sv });
+        get().addAudit({ action: 'SOLVER_SET', entityType: 'plan', entityId: sv, detail: sv === 'milp' ? 'Exact MILP (HiGHS) + simulated annealing polish' : 'Greedy + simulated annealing' });
+      },
+      importedFeeds: {},
+      importFeed: (system, batch) => {
+        const at = now();
+        set({ importedFeeds: { ...get().importedFeeds, [system]: { ...batch, at } } });
+        get().addAudit({ action: 'FEED_IMPORTED', entityType: 'feed', entityId: system.toUpperCase(), detail: `${batch.records.length} record(s) from ${batch.fileName} (${batch.mode}); ${batch.rejected} rejected` });
+      },
+      clearImportedFeed: (system) => {
+        const next = { ...get().importedFeeds };
+        delete next[system];
+        set({ importedFeeds: next });
+        get().addAudit({ action: 'FEED_IMPORT_CLEARED', entityType: 'feed', entityId: system.toUpperCase() });
+      },
+      weatherOverride: null,
+      setWeatherOverride: (w) => {
+        set({ weatherOverride: w });
+        get().addAudit({ action: w ? 'WEATHER_FORECAST_APPLIED' : 'WEATHER_FORECAST_CLEARED', entityType: 'feed', entityId: 'WEATHER', detail: w ? `${w.days.length} day(s) from ${w.source} for ${w.corridorId}` : undefined });
+      },
       weights: { ...(DEFAULT_WEIGHTS as Weights) },
       rules: { ...(RULES as Rules) },
       iterations: DEFAULT_ITERATIONS,
@@ -929,7 +1422,9 @@ export const useAppStore = create<AppState>()(
 
       intakeTasks: [],
       addIntakeTask: (t) => {
-        const task: IntakeTask = { ...t, id: `INTAKE-${short()}`, at: now() };
+        // every intake belongs to a corridor (the active one unless the caller says otherwise)
+        const corridorId = t.corridorId ?? t.spec.corridorId ?? get().corridorId;
+        const task: IntakeTask = { ...t, spec: { ...t.spec, corridorId }, corridorId, id: `INTAKE-${short()}`, at: now() };
         set({ intakeTasks: [...get().intakeTasks, task] });
         get().addAudit({ action: 'DEMAND_RAISED', entityType: 'task', entityId: task.id, detail: `${task.label} (${task.source})` });
         return task;
@@ -960,16 +1455,21 @@ export const useAppStore = create<AppState>()(
           ? { kpis: prev.result.weekly.kpis, baseKpis: prev.result.weekly.baseKpis, delta: prev.result.weekly.delta, scenarioName: prev.scenario?.name ?? null, blockCount: prev.result.weekly.kpis.blockCount }
           : s.previousResult;
         set({ planStatus: 'running', planProgress: 'Starting the planning engine', planError: null, previousResult });
+        const req = buildRequest(s);
         try {
-          const snapshot = await runPlanInWorker(buildRequest(s), (m) => set({ planProgress: m.text }));
+          const snapshot = await runPlanInWorker(req, (m) => set({ planProgress: m.text }));
           set({ snapshot, planStatus: 'ready', planProgress: 'Plan ready', planVersion: get().planVersion + 1, lastPlannedAt: now() });
-          get().addAudit({ action: 'PLAN_COMPUTED', entityType: 'plan', entityId: snapshot.corridor.code, detail: `${opts?.reason ?? 're-plan'} · ${snapshot.result.weekly.kpis.blockCount} possessions · ${(snapshot.timing.ms / 1000).toFixed(1)} s` });
+          reconcileAfterPlan(get, set, snapshot, !!opts?.silent);
+          if (!opts?.silent) get().addAudit({ action: 'PLAN_COMPUTED', entityType: 'plan', entityId: snapshot.corridor.code, detail: `${opts?.reason ?? 're-plan'} · ${snapshot.result.weekly.kpis.blockCount} possessions · ${(snapshot.timing.ms / 1000).toFixed(1)} s` });
+          // a block concurred / granted / locked / started while the engine ran was not held fixed: run again
+          const heldKey = (fb: FixedBlockConstraint[] | undefined) => (fb ?? []).map((f) => `${f.day}|${f.line}|${f.start}|${f.end}|${[...f.taskIds].sort().join(',')}`).sort().join(';');
+          if (heldKey(buildRequest(get()).fixedBlocks) !== heldKey(req.fixedBlocks) && snapshot.corridor.id === get().corridorId) set({ pendingRerun: true });
         } catch (e) {
           set({ planStatus: 'error', planError: (e as Error).message });
         }
         if (get().pendingRerun) {
           set({ pendingRerun: false });
-          void get().runPlan({ reason: 'queued re-plan' });
+          void get().runPlan({ reason: 'queued re-plan', silent: opts?.silent });
         }
       },
 
@@ -1010,6 +1510,7 @@ export const useAppStore = create<AppState>()(
           excludedTaskIds: c.patch.excludedTaskIds ?? s.excludedTaskIds,
           candidate: null,
         });
+        reconcileAfterPlan(get, set, c.snapshot);
         get().addAudit({ action: 'WORKING_PLAN_UPDATED', entityType: 'plan', entityId: c.snapshot.corridor.code, detail: `${c.reason} · ${c.snapshot.result.weekly.kpis.blockCount} possessions` });
       },
       discardCandidate: () => set({ candidate: null, candidateStatus: 'idle', candidateError: null }),
@@ -1017,57 +1518,168 @@ export const useAppStore = create<AppState>()(
       /* JPO workflow */
       approvals: {},
       proposeBlocks: (ids) => {
-        const u = get().user;
-        const next = { ...get().approvals };
-        for (const id of ids) next[id] = { ...(next[id] ?? emptyApproval()), proposedBy: u?.name ?? 'Planning cell', proposedAt: now() };
+        const s = get();
+        const u = s.user;
+        if (!u) { deny(get, 'signIn'); return 0; }
+        if (!can(u, 'plan')) { deny(get, 'noPlan'); return 0; }
+        const at = now();
+        const next = { ...s.approvals };
+        const sent: string[] = [];
+        const replaced: string[] = [];
+        for (const id of ids) {
+          const { raw, a, state } = blockCtx(s, id);
+          // only drafts and refused blocks can be (re)sent; a block must exist in the current plan
+          if (!raw || !(state === 'DRAFT' || state === 'REFUSED')) continue;
+          const base = a ?? emptyApproval();
+          next[id] = { ...base, status: 'PROPOSED', proposedBy: u.name, proposedAt: at, supersededAt: undefined, geometry: captureGeometry(raw, base.override, at) };
+          sent.push(id);
+          // a superseded proposal for any of these works is replaced by the new block
+          for (const [oid, oa] of Object.entries(next)) {
+            if (oid === id || !oa.supersededAt || oa.status !== 'PROPOSED' || !oa.geometry) continue;
+            if (oa.geometry.taskIds.some((t) => raw.tasks.some((x) => x.id === t))) {
+              delete next[oid];
+              replaced.push(oid);
+            }
+          }
+        }
+        if (!sent.length) return 0;
         set({ approvals: next });
-        get().addAudit({ action: 'SENT_TO_CONTROL', entityType: 'plan', entityId: `${ids.length} blocks`, detail: ids.slice(0, 6).join(', ') });
+        get().addAudit({ action: 'SENT_TO_CONTROL', entityType: 'plan', entityId: `${sent.length} blocks`, detail: `${sent.slice(0, 6).join(', ')}${replaced.length ? ` · replaces superseded ${replaced.join(', ')}` : ''}` });
+        return sent.length;
       },
       concur: (blockId, dept, note) => {
-        const u = get().user;
-        const a = get().approvals[blockId] ?? emptyApproval();
-        set({ approvals: { ...get().approvals, [blockId]: { ...a, concur: { ...a.concur, [dept]: { by: u?.name ?? 'Unknown', at: now(), note } }, objections: a.objections.filter((o) => o.dept !== dept) } } });
-        get().addAudit({ action: `CONCUR_${dept}`, entityType: 'block', entityId: blockId, detail: note ? `${dept} concurrence · ${note}` : `${dept} concurrence recorded` });
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        const own = can(u, `concur:${dept}` as Capability);
+        const onBehalf = !own && can(u, 'plan');
+        if (!own && !onBehalf) return deny(get, 'noConcur', { dept });
+        if (onBehalf && !note?.trim()) return deny(get, 'onBehalfNote', { dept });
+        const { raw, a, departments, state } = blockCtx(s, blockId);
+        const open = checkConcurOpen(get, blockId, state);
+        if (!open || !a) return false;
+        if (departments.length && !departments.includes(dept)) return deny(get, 'deptNotIn', { dept, id: blockId });
+        const at = now();
+        const next: Approval = { ...a, concur: { ...a.concur, [dept]: { by: u.name, at, note: onBehalf ? `On behalf · ${note}` : note } }, objections: a.objections.filter((o) => o.dept !== dept) };
+        if (raw) next.geometry = captureGeometry(raw, a.override, at);
+        set({ approvals: { ...s.approvals, [blockId]: next } });
+        get().addAudit({ action: `CONCUR_${dept}`, entityType: 'block', entityId: blockId, detail: `${dept} concurrence${onBehalf ? ' recorded on behalf by the planning cell' : ''}${note ? ` · ${note}` : ''}` });
+        return true;
       },
       object: (blockId, dept, reason) => {
-        const u = get().user;
-        const a = get().approvals[blockId] ?? emptyApproval();
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, `concur:${dept}` as Capability)) return deny(get, 'noConcur', { dept });
+        const { raw, a, departments, state } = blockCtx(s, blockId);
+        if (!checkConcurOpen(get, blockId, state) || !a) return false;
+        if (departments.length && !departments.includes(dept)) return deny(get, 'deptNotIn', { dept, id: blockId });
+        const at = now();
         const { [dept]: _removed, ...rest } = a.concur;
-        set({ approvals: { ...get().approvals, [blockId]: { ...a, concur: rest, objections: [...a.objections, { dept, by: u?.name ?? 'Unknown', at: now(), reason }] } } });
+        const next: Approval = { ...a, concur: rest, objections: [...a.objections, { dept, by: u.name, at, reason }] };
+        if (raw) next.geometry = captureGeometry(raw, a.override, at);
+        set({ approvals: { ...s.approvals, [blockId]: next } });
         get().addAudit({ action: `OBJECTION_${dept}`, entityType: 'block', entityId: blockId, detail: reason });
         get().notify({ portals: ['planning', 'control'], kind: 'WARNING', title: `Objection on ${blockId} from ${dept}`, body: reason, route: `/app/planning/handoff?block=${blockId}` });
+        return true;
       },
       grant: (blockId, override) => {
-        const u = get().user;
-        const a = get().approvals[blockId] ?? emptyApproval();
-        const next: Approval = { ...a, status: 'GRANTED', grantedBy: u?.name ?? 'Unknown', grantedAt: now() };
-        if (override) next.override = { ...override, by: u?.name ?? 'Unknown', at: now() };
-        set({ approvals: { ...get().approvals, [blockId]: next } });
-        get().addAudit({ action: override ? 'BLOCK_GRANTED_WITH_CHANGE' : 'BLOCK_GRANTED', entityType: 'block', entityId: blockId, detail: override ? `Window changed to ${Math.floor(override.start / 60)}:${String(override.start % 60).padStart(2, '0')}–${Math.floor(override.end / 60)}:${String(override.end % 60).padStart(2, '0')}` : 'Possession granted by Control' });
-        get().notify({ portals: ['planning', 'tms', 'smms', 'tdms', 'field'], kind: 'OK', title: `Block ${blockId} granted`, body: override ? 'Granted with a changed window' : 'Granted by Control', route: `/app/planning/weekly?block=${blockId}` });
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'grant')) return deny(get, 'noGrant');
+        const { raw, a, departments, state } = blockCtx(s, blockId);
+        if (!raw || !a) return deny(get, state === 'DRAFT' && raw ? 'notSent' : 'notInPlan', { id: blockId });
+        if (state === 'SUPERSEDED') return deny(get, 'superseded', { id: blockId });
+        if (state === 'PROPOSED') return deny(get, 'notConcurred', { id: blockId, missing: departments.filter((d) => !a.concur[d]).join(', ') });
+        if (state !== 'CONCURRED') return deny(get, state === 'DRAFT' ? 'notSent' : 'grantState', { id: blockId, state: stateWord(get, state) });
+        if (override && !(override.start >= 0 && override.end <= 1440 && override.end > override.start)) return deny(get, 'badWindow');
+        const at = now();
+        const next: Approval = { ...a, status: 'GRANTED', grantedBy: u.name, grantedAt: at };
+        if (override) next.override = { ...override, by: u.name, at };
+        next.geometry = captureGeometry(raw, next.override, at);
+        set({ approvals: { ...s.approvals, [blockId]: next } });
+        const win = `${hhmm(next.geometry.start)}–${hhmm(next.geometry.end)}`;
+        get().addAudit({ action: override ? 'BLOCK_GRANTED_WITH_CHANGE' : 'BLOCK_GRANTED', entityType: 'block', entityId: blockId, detail: override ? `Window changed to ${win}` : `Possession granted by Control · ${win}` });
+        get().notify({ portals: ['planning', ...deptPortals(departments), 'field'], kind: 'OK', title: `Block ${blockId} granted`, body: `${raw.sectionText} ${raw.line} · ${raw.dateLabel} ${win}${override ? ' (window changed by Control)' : ''}`, route: `/app/planning/weekly?block=${blockId}` });
+        return true;
       },
       refuse: (blockId, reason) => {
-        const u = get().user;
-        const a = get().approvals[blockId] ?? emptyApproval();
-        set({ approvals: { ...get().approvals, [blockId]: { ...a, status: 'REFUSED', refusal: { reason, count: (a.refusal?.count ?? 0) + 1, by: u?.name ?? 'Unknown', at: now() } } } });
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'grant')) return deny(get, 'noGrant');
+        const { raw, a, departments, state } = blockCtx(s, blockId);
+        if (!a || !(state === 'PROPOSED' || state === 'CONCURRED')) return deny(get, state === 'DRAFT' ? 'notSent' : 'refuseState', { id: blockId, state: stateWord(get, state) });
+        const at = now();
+        const next: Approval = { ...a, status: 'REFUSED', refusal: { reason, count: (a.refusal?.count ?? 0) + 1, by: u.name, at } };
+        if (raw) next.geometry = captureGeometry(raw, a.override, at);
+        set({ approvals: { ...s.approvals, [blockId]: next } });
         get().addAudit({ action: 'BLOCK_REFUSED', entityType: 'block', entityId: blockId, detail: reason });
-        get().notify({ portals: ['planning', 'tms', 'smms', 'tdms'], kind: 'WARNING', title: `Block ${blockId} refused by Control`, body: reason, route: `/app/planning/weekly?block=${blockId}` });
+        get().notify({ portals: ['planning', ...deptPortals(departments)], kind: 'WARNING', title: `Block ${blockId} refused by Control`, body: reason, route: `/app/planning/weekly?block=${blockId}` });
+        return true;
       },
-      lock: (blockId) => {
-        const u = get().user;
-        const a = get().approvals[blockId] ?? emptyApproval();
-        set({ approvals: { ...get().approvals, [blockId]: { ...a, status: 'LOCKED', lockedBy: u?.name ?? 'Unknown', lockedAt: now() } } });
-        get().addAudit({ action: 'BLOCK_LOCKED', entityType: 'block', entityId: blockId, detail: 'Locked into the COA working time table' });
+      lock: (blockId) => get().lockBlocks([blockId]) === 1,
+      lockBlocks: (ids) => {
+        const s = get();
+        const u = s.user;
+        if (!u) { deny(get, 'signIn'); return 0; }
+        if (!can(u, 'lock')) { deny(get, 'noLock'); return 0; }
+        const at = now();
+        const next = { ...s.approvals };
+        const locked: { id: string; raw: Block | null; departments: Dept[]; geometry: BlockGeometry | undefined }[] = [];
+        for (const id of ids) {
+          const { raw, a, departments, state } = blockCtx(s, id);
+          if (!a || state !== 'GRANTED') {
+            if (ids.length === 1) deny(get, 'lockState', { id, state: stateWord(get, state) });
+            continue;
+          }
+          const geometry = raw ? captureGeometry(raw, a.override, at) : a.geometry;
+          next[id] = { ...a, status: 'LOCKED', lockedBy: u.name, lockedAt: at, geometry };
+          locked.push({ id, raw, departments, geometry });
+        }
+        if (!locked.length) return 0;
+        set({ approvals: next });
+        for (const l of locked) {
+          const g = l.geometry;
+          get().addAudit({ action: 'BLOCK_LOCKED', entityType: 'block', entityId: l.id, detail: `Locked into the COA working time table${g ? ` · ${g.date ?? `day ${g.day}`} ${hhmm(g.start)}–${hhmm(g.end)}` : ''}` });
+        }
+        // one notification per addressee group: the departments in the locked blocks, field and planning
+        const depts = [...new Set(locked.flatMap((l) => l.departments))];
+        const first = locked[0];
+        const when = first.raw?.dateLabel ?? first.geometry?.date ?? '';
+        const title = locked.length === 1 ? `Block ${first.id} locked for ${when}` : `${locked.length} blocks locked for ${[...new Set(locked.map((l) => l.raw?.dateLabel ?? l.geometry?.date ?? ''))].join(', ')}`;
+        const body = locked
+          .slice(0, 3)
+          .map((l) => `${l.raw?.sectionText ?? l.id} ${l.geometry ? `${hhmm(l.geometry.start)}–${hhmm(l.geometry.end)}` : ''}`.trim())
+          .join(' · ');
+        get().notify({ portals: [...deptPortals(depts), 'field', 'planning'], kind: 'OK', title, body, route: locked.length === 1 ? `/app/planning/weekly?block=${first.id}` : '/app/planning/handoff' });
+        return locked.length;
       },
       setIncharge: (blockId, name) => {
+        const u = get().user;
+        if (!u) return deny(get, 'signIn');
+        if (!RESOURCE_CAPS.some((c) => can(u, c))) return deny(get, 'noResources');
         const a = get().approvals[blockId] ?? emptyApproval();
         set({ approvals: { ...get().approvals, [blockId]: { ...a, incharge: name } } });
         get().addAudit({ action: 'INCHARGE_SET', entityType: 'block', entityId: blockId, detail: name });
+        return true;
       },
       setResources: (blockId, r) => {
-        const a = get().approvals[blockId] ?? emptyApproval();
-        set({ approvals: { ...get().approvals, [blockId]: { ...a, resources: { ...(a.resources ?? {}), ...r } } } });
-        get().addAudit({ action: 'RESOURCES_ASSIGNED', entityType: 'block', entityId: blockId, detail: [r.machineId, r.crewId].filter(Boolean).join(' · ') });
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!RESOURCE_CAPS.some((c) => can(u, c))) return deny(get, 'noResources');
+        // refuse a machine or gang that is already working in an overlapping block
+        const clash = resourceClash(workingBlocks(s.snapshot, s.approvals), s.approvals, blockId, r);
+        if (clash) {
+          const label = clash.kind === 'MACHINE' ? s.snapshot?.feeds.machines.find((m) => m.id === clash.resourceId)?.label : s.snapshot?.feeds.crews.find((c) => c.id === clash.resourceId)?.label;
+          return deny(get, 'clash', { res: label ?? clash.resourceId, other: clash.otherBlockId, window: `${hhmm(clash.otherStart)}–${hhmm(clash.otherEnd)}` });
+        }
+        const a = s.approvals[blockId] ?? emptyApproval();
+        set({ approvals: { ...s.approvals, [blockId]: { ...a, resources: { ...(a.resources ?? {}), ...r } } } });
+        get().addAudit({ action: 'RESOURCES_ASSIGNED', entityType: 'block', entityId: blockId, detail: [r.machineId, r.crewId].filter(Boolean).join(' · ') || 'Back to the planned allocation' });
+        return true;
       },
       resetApprovals: () => set({ approvals: {} }),
       handoverNotes: {},
@@ -1155,23 +1767,54 @@ export const useAppStore = create<AppState>()(
       /* execution */
       executionLog: SEED_EXECUTION_LOG,
       startPossession: (rec) => {
-        const u = get().user;
-        const existing = get().executionLog.filter((r) => r.blockId !== rec.blockId);
-        set({ executionLog: [{ ...rec, status: 'IN_PROGRESS', by: u?.name ?? 'Field', source: rec.source ?? 'field', updatedAt: now() }, ...existing] });
-        get().addAudit({ action: 'POSSESSION_STARTED', entityType: 'block', entityId: rec.blockId, detail: `Actual start ${String(Math.floor(rec.actualStart / 60)).padStart(2, '0')}:${String(rec.actualStart % 60).padStart(2, '0')}` });
-        get().notify({ portals: ['control', 'planning'], kind: 'INFO', title: `Possession started · ${rec.blockId}`, body: `${rec.sectionText} ${rec.line} — gang on site`, route: `/app/control/blocks?block=${rec.blockId}` });
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'execute')) return deny(get, 'noExecute');
+        const { raw, a, state } = blockCtx(s, rec.blockId);
+        if (!(state === 'GRANTED' || state === 'LOCKED') || !a) return deny(get, 'notGranted', { id: rec.blockId });
+        if (s.executionLog.some((r) => r.blockId === rec.blockId)) return deny(get, 'alreadyStarted', { id: rec.blockId });
+        // work-only planned minutes per task (the seeded history's basis), never the block window
+        const tasks = new Map((s.snapshot?.tasks ?? []).map((t) => [t.id, t]));
+        const items = rec.items.map((it) => ({ ...it, ...workOnlyMinutes(tasks.get(it.taskId), it.plannedMin) }));
+        const at = now();
+        set({ executionLog: [{ ...rec, items, status: 'IN_PROGRESS', by: u.name, source: rec.source ?? 'field', updatedAt: at }, ...s.executionLog] });
+        // the started block is held fixed on the next re-plan at its current geometry
+        if (raw && !a.geometry) set({ approvals: { ...get().approvals, [rec.blockId]: { ...a, geometry: captureGeometry(raw, a.override, at) } } });
+        get().addAudit({ action: 'POSSESSION_STARTED', entityType: 'block', entityId: rec.blockId, detail: `Actual start ${hhmm(rec.actualStart)}${rec.source === 'control' ? ' (recorded by Control)' : ''}` });
+        get().notify({ portals: ['control', 'planning'], kind: 'INFO', title: `Possession started · ${rec.blockId}`, body: `${rec.sectionText} ${rec.line} — gang on site at ${hhmm(rec.actualStart)}`, route: `/app/control/blocks?block=${rec.blockId}` });
+        return true;
       },
       markItemDone: (blockId, taskId, actualMin, remarks) => {
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'execute')) return deny(get, 'noExecute');
+        if (!s.executionLog.some((r) => r.blockId === blockId && r.items.some((it) => it.taskId === taskId))) return deny(get, 'notStarted', { id: blockId });
+        const task = s.snapshot?.tasks.find((t) => t.id === taskId);
         set({
-          executionLog: get().executionLog.map((r) =>
-            r.blockId !== blockId ? r : { ...r, updatedAt: now(), items: r.items.map((it) => (it.taskId === taskId ? { ...it, done: true, actualMin, remarks } : it)) }
+          executionLog: s.executionLog.map((r) =>
+            r.blockId !== blockId
+              ? r
+              : {
+                  ...r,
+                  updatedAt: now(),
+                  // records made before work-only minutes existed are corrected from the plan here
+                  items: r.items.map((it) => (it.taskId === taskId ? { ...it, ...(it.baseMin === undefined && task ? workOnlyMinutes(task, it.plannedMin) : {}), done: true, actualMin, remarks } : it)),
+                }
           ),
         });
         get().addAudit({ action: 'WORK_COMPLETED', entityType: 'task', entityId: taskId, detail: `${actualMin} min actual${remarks ? ` · ${remarks}` : ''}` });
+        return true;
       },
       clearPossession: (blockId, data) => {
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'execute')) return deny(get, 'noExecute');
+        if (!s.executionLog.some((r) => r.blockId === blockId && r.status === 'IN_PROGRESS')) return deny(get, 'notStarted', { id: blockId });
         set({
-          executionLog: get().executionLog.map((r) => {
+          executionLog: s.executionLog.map((r) => {
             if (r.blockId !== blockId) return r;
             const start = r.actualStart ?? r.plannedStart;
             return { ...r, status: 'COMPLETED', actualEnd: data.actualEnd, actualSpanMin: Math.max(0, data.actualEnd - start), overrunCause: data.overrunCause, speedOnLifting: data.speedOnLifting ?? null, source: data.source ?? r.source, updatedAt: now() };
@@ -1179,20 +1822,123 @@ export const useAppStore = create<AppState>()(
         });
         get().addAudit({ action: 'POSSESSION_CLEARED', entityType: 'block', entityId: blockId, detail: data.speedOnLifting ? `Line handed back with ${data.speedOnLifting} km/h restriction` : 'Line handed back at normal speed' });
         get().notify({ portals: ['control', 'planning'], kind: 'OK', title: `Line clear · ${blockId}`, body: data.speedOnLifting ? `Fit for ${data.speedOnLifting} km/h` : 'Fit for full speed', route: `/app/control/execution` });
+        return true;
       },
       resetExecution: () => set({ executionLog: [] }),
+
+      extensions: [],
+      requestExtension: (blockId, req) => {
+        const s = get();
+        const u = s.user;
+        if (!u) {
+          deny(get, 'signIn');
+          return null;
+        }
+        if (!can(u, 'execute')) {
+          deny(get, 'noExecute');
+          return null;
+        }
+        const extraMin = Math.round(Number(req.extraMin));
+        if (!Number.isFinite(extraMin) || extraMin < 5 || extraMin > 240 || !req.reason?.trim()) {
+          deny(get, 'extInvalid');
+          return null;
+        }
+        const { raw, a, state } = blockCtx(s, blockId);
+        if (!(state === 'GRANTED' || state === 'LOCKED') || !a) {
+          deny(get, 'extState');
+          return null;
+        }
+        if (s.extensions.some((e) => e.blockId === blockId && e.status === 'PENDING')) {
+          deny(get, 'extPending', { id: blockId });
+          return null;
+        }
+        const end = a.override?.end ?? raw?.end ?? a.geometry?.end ?? 0;
+        if (end + extraMin > 1440) {
+          deny(get, 'extMidnight');
+          return null;
+        }
+        const e: ExtensionRequest = { id: `EXT-${short()}`, blockId, extraMin, reason: req.reason.trim(), by: u.name, role: u.role, at: now(), status: 'PENDING' };
+        set({ extensions: [e, ...s.extensions].slice(0, 200) });
+        get().addAudit({ action: 'EXTENSION_REQUESTED', entityType: 'block', entityId: blockId, detail: `+${extraMin} min · ${e.reason}` });
+        get().notify({ portals: ['control'], kind: 'ACTION', title: `Extension requested · ${blockId}`, body: `+${extraMin} min to ${hhmm(end + extraMin)} · ${e.reason} (${u.name})`, route: `/app/control/board?block=${blockId}` });
+        return e;
+      },
+      decideExtension: (blockId, requestId, approve, note) => {
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'grant')) return deny(get, 'noGrant');
+        const req = s.extensions.find((e) => e.id === requestId && e.blockId === blockId && e.status === 'PENDING');
+        if (!req) return deny(get, 'extNotFound');
+        const { raw, a, departments, state } = blockCtx(s, blockId);
+        const at = now();
+        const decided: ExtensionRequest = { ...req, status: approve ? 'APPROVED' : 'REFUSED', decidedBy: u.name, decidedAt: at, note: note?.trim() || undefined };
+        if (approve) {
+          if (!(state === 'GRANTED' || state === 'LOCKED') || !a) return deny(get, 'extState');
+          const start = a.override?.start ?? raw?.start ?? a.geometry?.start ?? 0;
+          const end = (a.override?.end ?? raw?.end ?? a.geometry?.end ?? 0) + req.extraMin;
+          if (end > 1440) return deny(get, 'extMidnight');
+          const override = { start, end, by: u.name, at };
+          const geometry = raw ? captureGeometry(raw, override, at) : a.geometry ? { ...a.geometry, end, capturedAt: at } : undefined;
+          set({
+            approvals: { ...s.approvals, [blockId]: { ...a, override, geometry, extendedMin: (a.extendedMin ?? 0) + req.extraMin } },
+            executionLog: s.executionLog.map((r) => (r.blockId === blockId && r.status === 'IN_PROGRESS' ? { ...r, extendedMin: (r.extendedMin ?? 0) + req.extraMin, updatedAt: at } : r)),
+            extensions: s.extensions.map((e) => (e.id === requestId ? decided : e)),
+          });
+          get().addAudit({ action: 'EXTENSION_APPROVED', entityType: 'block', entityId: blockId, detail: `+${req.extraMin} min · block now ${hhmm(start)}–${hhmm(end)}${decided.note ? ` · ${decided.note}` : ''}` });
+          get().notify({ portals: ['field', ...deptPortals(departments)], kind: 'OK', title: `Extension granted · ${blockId}`, body: `Block now ends ${hhmm(end)} (+${req.extraMin} min)${decided.note ? ` · ${decided.note}` : ''}`, route: `/app/field/today?block=${blockId}` });
+        } else {
+          set({ extensions: s.extensions.map((e) => (e.id === requestId ? decided : e)) });
+          get().addAudit({ action: 'EXTENSION_REFUSED', entityType: 'block', entityId: blockId, detail: `+${req.extraMin} min refused${decided.note ? ` · ${decided.note}` : ''}` });
+          get().notify({ portals: ['field', ...deptPortals(departments)], kind: 'WARNING', title: `Extension refused · ${blockId}`, body: decided.note ?? 'Clear the line by the granted end time', route: `/app/field/today?block=${blockId}` });
+        }
+        return true;
+      },
+
       messages: [],
       messageControl: (blockId, text) => {
         const u = get().user;
-        const m = { id: uid(), blockId, text, by: u?.name ?? 'Field', at: now() };
-        set({ messages: [m, ...get().messages].slice(0, 200) });
-        get().notify({ portals: ['control'], kind: 'INFO', title: `Message from site · ${blockId}`, body: text, route: `/app/control/blocks?block=${blockId}` });
+        if (!text.trim()) {
+          deny(get, 'emptyText');
+          return;
+        }
+        const m: SiteMessage = { id: uid(), blockId, text: text.trim(), by: u?.name ?? 'Field', role: u?.role, at: now(), from: 'field' };
+        set({ messages: [m, ...get().messages].slice(0, 300) });
+        get().addAudit({ action: 'SITE_MESSAGE', entityType: 'block', entityId: blockId, detail: m.text.slice(0, 120) });
+        get().notify({ portals: ['control'], kind: 'INFO', title: `Message from site · ${blockId}`, body: `${m.text} (${m.by})`, route: `/app/control/board?block=${blockId}` });
+      },
+      replyToMessage: (messageId, text) => {
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (!(can(u, 'grant') || u.portal === 'control')) return deny(get, 'noReply');
+        if (!text.trim()) return deny(get, 'emptyText');
+        const orig = s.messages.find((m) => m.id === messageId);
+        if (!orig) return deny(get, 'msgNotFound');
+        const m: SiteMessage = { id: uid(), blockId: orig.blockId, text: text.trim(), by: u.name, role: u.role, at: now(), from: 'control', replyTo: messageId };
+        set({ messages: [m, ...s.messages].slice(0, 300) });
+        get().addAudit({ action: 'SITE_MESSAGE_REPLIED', entityType: 'block', entityId: orig.blockId, detail: m.text.slice(0, 120) });
+        get().notify({ portals: ['field'], kind: 'INFO', title: `Control replied · ${orig.blockId}`, body: m.text, route: `/app/field/today?block=${orig.blockId}` });
+        return true;
       },
       acks: [],
-      ackCaution: (orderNo) => {
-        const u = get().user;
-        set({ acks: [{ id: uid(), orderNo, by: u?.name ?? 'Loco pilot', at: now() }, ...get().acks].slice(0, 300) });
-        get().addAudit({ action: 'CAUTION_ACKNOWLEDGED', entityType: 'caution', entityId: orderNo });
+      ackCaution: (orderNo, trainNo) => {
+        const s = get();
+        const u = s.user;
+        if (!u) return deny(get, 'signIn');
+        if (s.acks.some((a) => a.orderNo === orderNo && a.by === u.name)) return deny(get, 'ackDup', { no: orderNo });
+        const at = now();
+        const ack: CautionAck = { id: uid(), orderNo, by: u.name, role: u.role, at, trainNo: trainNo || undefined };
+        const entry = { by: u.name, at, role: u.role, trainNo: trainNo || undefined };
+        const f = s.forms[orderNo];
+        // the order keeps its status (ISSUED); acknowledgements are listed on it. A manual TSR order in force
+        // has no form record until someone touches it — it is issued by being in force, so one is created.
+        const forms = f ? { ...s.forms, [orderNo]: { ...f, acknowledgements: [...(f.acknowledgements ?? []), entry] } } : /\/M-/.test(orderNo) ? { ...s.forms, [orderNo]: { status: 'ISSUED' as FormStatus, by: 'Control (TSR in force)', at, acknowledgements: [entry] } } : s.forms;
+        set({ acks: [ack, ...s.acks].slice(0, 300), forms });
+        const count = [ack, ...s.acks].filter((a) => a.orderNo === orderNo).length;
+        get().addAudit({ action: 'CAUTION_ACKNOWLEDGED', entityType: 'caution', entityId: orderNo, detail: `${u.name}${trainNo ? ` · train ${trainNo}` : ''} · ${count} acknowledgement${count > 1 ? 's' : ''}` });
+        get().notify({ portals: ['control'], kind: 'INFO', title: `Caution order acknowledged · ${orderNo}`, body: `${u.name}${trainNo ? ` (train ${trainNo})` : ''} · ${count} acknowledgement${count > 1 ? 's' : ''} so far`, route: '/app/control/caution' });
+        return true;
       },
 
       /* requisitions */
@@ -1217,25 +1963,59 @@ export const useAppStore = create<AppState>()(
       },
       returnRequisition: (id, remarks) => {
         const u = get().user;
+        if (!u) return deny(get, 'signIn');
+        if (!can(u, 'plan')) return deny(get, 'noPlan');
+        const cur = get().requisitions.find((r) => r.id === id);
+        if (!cur || cur.status !== 'SUBMITTED') return deny(get, 'reqState', { no: cur?.no ?? id, status: cur?.status ?? '—' });
         set({ requisitions: get().requisitions.map((r) => (r.id === id ? { ...r, status: 'RETURNED', cellRemarks: remarks, updatedAt: now(), history: [...r.history, { at: now(), by: u?.name ?? 'Unknown', action: 'RETURNED', note: remarks }] } : r)) });
         const req = get().requisitions.find((r) => r.id === id);
         get().addAudit({ action: 'REQUISITION_RETURNED', entityType: 'requisition', entityId: req?.no ?? id, detail: remarks });
         if (req) get().notify({ portals: [req.dept.toLowerCase() as PortalId], kind: 'WARNING', title: `Requisition ${req.no} returned`, body: remarks, route: `/app/${req.dept.toLowerCase()}/demand?req=${req.id}` });
+        return true;
       },
       acceptRequisition: (id) => {
-        const u = get().user;
-        const req = get().requisitions.find((r) => r.id === id);
+        const s = get();
+        const u = s.user;
+        const req = s.requisitions.find((r) => r.id === id);
         if (!req) return null;
+        if (!u) {
+          deny(get, 'signIn');
+          return null;
+        }
+        if (!can(u, 'plan')) {
+          deny(get, 'noPlan');
+          return null;
+        }
+        if (req.status !== 'SUBMITTED') {
+          deny(get, 'reqState', { no: req.no, status: req.status });
+          return null;
+        }
+        // everything the requisition asks for goes to the optimiser: duration, preferred day / window,
+        // machine, block kind, power block / disconnection, dependencies, corridor, replaced register work
+        const planStart = s.snapshot && s.snapshot.corridor.id === req.corridorId ? s.snapshot.planStart : null;
+        const knownTaskIds = s.snapshot && s.snapshot.corridor.id === req.corridorId ? new Set(s.snapshot.tasks.map((t) => t.id)) : null;
+        const spec = requisitionInjectSpec(req, { planStart, corridorId: req.corridorId, knownTaskIds });
         const task = get().addIntakeTask({
-          spec: { sourceId: `BDMS/${req.no}`, label: `${req.workType.replace(/_/g, ' ').toLowerCase()} (requisition ${req.no})`, workType: req.workType, line: req.line, startKm: req.startKm, endKm: req.endKm, daysOverdue: req.daysOverdue ?? 0, tsrKmph: req.tsrKmph ?? undefined, note: req.remarks },
+          spec,
           label: `${req.workType} · km ${req.startKm}–${req.endKm} ${req.line}`,
           dept: req.dept,
           submittedBy: req.by,
           role: req.role,
           source: 'REQUISITION',
+          corridorId: req.corridorId,
         });
-        set({ requisitions: get().requisitions.map((r) => (r.id === id ? { ...r, status: 'ACCEPTED', intakeTaskId: task.id, updatedAt: now(), history: [...r.history, { at: now(), by: u?.name ?? 'Unknown', action: 'ACCEPTED' }] } : r)) });
-        get().addAudit({ action: 'REQUISITION_ACCEPTED', entityType: 'requisition', entityId: req.no, detail: `→ ${task.id}` });
+        set({ requisitions: get().requisitions.map((r) => (r.id === id ? { ...r, status: 'ACCEPTED', intakeTaskId: task.id, updatedAt: now(), history: [...r.history, { at: now(), by: u.name, action: 'ACCEPTED' }] } : r)) });
+        const honoured = [
+          spec.durationMin ? `${spec.durationMin} min` : null,
+          spec.preferredDay !== undefined ? `day ${spec.preferredDay + 1}` : req.preferredDate ? 'preferred date outside this week' : null,
+          spec.preferredWindow && spec.preferredWindow !== 'any' ? spec.preferredWindow : null,
+          spec.machine ?? null,
+          spec.requires?.join(' + ') ?? null,
+          spec.dependsOn?.length ? `after ${spec.dependsOn.join(', ')}` : null,
+          spec.coRequireWith?.length ? `with ${spec.coRequireWith.join(', ')}` : null,
+          spec.replacesTaskId ? `replaces ${spec.replacesTaskId}` : null,
+        ].filter(Boolean);
+        get().addAudit({ action: 'REQUISITION_ACCEPTED', entityType: 'requisition', entityId: req.no, detail: `→ ${task.id}${honoured.length ? ` · ${honoured.join(' · ')}` : ''}` });
         get().notify({ portals: [req.dept.toLowerCase() as PortalId], kind: 'OK', title: `Requisition ${req.no} accepted`, body: 'The work is in the next plan run', route: `/app/${req.dept.toLowerCase()}/blocks` });
         return task;
       },
@@ -1243,16 +2023,29 @@ export const useAppStore = create<AppState>()(
         const u = get().user;
         const req = get().requisitions.find((r) => r.id === id);
         if (!req) return;
-        if (req.intakeTaskId) get().removeIntakeTask(req.intakeTaskId);
-        set({ requisitions: get().requisitions.map((r) => (r.id === id ? { ...r, status: 'WITHDRAWN', updatedAt: now(), history: [...r.history, { at: now(), by: u?.name ?? 'Unknown', action: 'WITHDRAWN' }] } : r)) });
-        get().addAudit({ action: 'REQUISITION_WITHDRAWN', entityType: 'requisition', entityId: req.no });
+        // an accepted requisition's injected work leaves the optimiser input with it
+        if (req.intakeTaskId && get().intakeTasks.some((t) => t.id === req.intakeTaskId)) get().removeIntakeTask(req.intakeTaskId);
+        set({ requisitions: get().requisitions.map((r) => (r.id === id ? { ...r, status: 'WITHDRAWN', intakeTaskId: undefined, updatedAt: now(), history: [...r.history, { at: now(), by: u?.name ?? 'Unknown', action: 'WITHDRAWN', note: req.intakeTaskId ? `Injected work ${req.intakeTaskId} removed` : undefined }] } : r)) });
+        get().addAudit({ action: 'REQUISITION_WITHDRAWN', entityType: 'requisition', entityId: req.no, detail: req.intakeTaskId ? `Injected work ${req.intakeTaskId} removed — re-plan to drop it` : undefined });
+        if (req.status === 'ACCEPTED') get().notify({ portals: ['planning'], kind: 'WARNING', title: `Requisition ${req.no} withdrawn`, body: 'Its work leaves the next plan run', route: '/app/planning/demands' });
       },
 
       /* hazard reports */
       reports: SEED_REPORTS,
       submitReport: (r) => {
+        const s = get();
         const dept = r.dept === undefined ? deptForCategory(r.category) : r.dept;
-        const rep: HazardReport = { ...r, dept, id: `HZ-${short()}`, at: now(), status: 'UNVERIFIED', history: [{ at: now(), by: r.reporter.name || 'Reporter', action: 'RECEIVED', note: dept ? `Routed to ${dept}` : 'Routed to Control for triage' }] };
+        // keyword suggestion (shown to triage when it differs from what the reporter picked)
+        const sug = suggestCategory(r.description);
+        const suggestedCategory = sug && sug.category !== r.category ? sug : null;
+        // severity: the reporter's choice, else the points table over timetable / TSR facts at the location
+        let auto: Pick<HazardReport, 'severity' | 'severityAuto' | 'severityReasons'> = {};
+        if (!r.severity) {
+          const facts = severityFactsAt(s.snapshot && s.snapshot.corridor.id === r.corridorId ? s.snapshot : null, s.tsrs, { km: r.km, line: r.line, day: 0, minute: nowMinuteIST() });
+          const sev = computeSeverity({ category: r.category, ...facts });
+          auto = { severity: sev.level, severityAuto: true, severityReasons: [...sev.reasons, ...(facts.nextTrainNo ? [`Next train: ${facts.nextTrainNo} (timetable)`] : [])] };
+        }
+        const rep: HazardReport = { ...r, ...auto, suggestedCategory, dept, id: `HZ-${short()}`, at: now(), status: 'UNVERIFIED', history: [{ at: now(), by: r.reporter.name || 'Reporter', action: 'RECEIVED', note: `${dept ? `Routed to ${dept}` : 'Routed to Control for triage'}${auto.severityAuto ? ` · severity ${auto.severity} (rule-based)` : ''}` }] };
         set({ reports: [rep, ...get().reports], myReportIds: r.source === 'citizen' ? [rep.id, ...get().myReportIds] : get().myReportIds });
         get().addAudit({ action: 'HAZARD_REPORTED', entityType: 'report', entityId: rep.id, detail: `${rep.category} · ${rep.description.slice(0, 80)}`, by: rep.reporter.name || 'Reporter', role: rep.reporter.role });
         const portals: PortalId[] = ['control', 'planning', ...(dept ? [dept.toLowerCase() as PortalId] : [])];
@@ -1280,8 +2073,10 @@ export const useAppStore = create<AppState>()(
               case 'accept': {
                 const spec = data?.taskSpec ?? r.taskSpec;
                 if (!spec) return r;
-                created = get().addIntakeTask({ spec: { ...spec, sourceId: spec.sourceId ?? `REPORT/${r.id}` }, label: spec.label ?? `${spec.workType} from report ${r.id}`, dept: (data?.dept ?? r.dept ?? 'TMS') as Dept, submittedBy: by, role: u?.role ?? 'UNKNOWN', source: r.source === 'citizen' ? 'CITIZEN' : 'FIELD' });
-                return { ...r, status: 'TASK', taskSpec: spec, intakeTaskId: created.id, dept: data?.dept ?? r.dept, history: h };
+                // the work belongs to the report's corridor, whatever corridor is active now
+                const withCorridor: InjectSpecV4 = { ...spec, sourceId: spec.sourceId ?? `REPORT/${r.id}`, corridorId: r.corridorId };
+                created = get().addIntakeTask({ spec: withCorridor, label: spec.label ?? `${spec.workType} from report ${r.id}`, dept: (data?.dept ?? r.dept ?? 'TMS') as Dept, submittedBy: by, role: u?.role ?? 'UNKNOWN', source: r.source === 'citizen' ? 'CITIZEN' : 'FIELD', corridorId: r.corridorId });
+                return { ...r, status: 'TASK', taskSpec: withCorridor, intakeTaskId: created.id, dept: data?.dept ?? r.dept, history: h };
               }
               case 'reject':
                 return { ...r, status: 'REJECTED', history: h };
@@ -1298,7 +2093,12 @@ export const useAppStore = create<AppState>()(
 
       /* notifications */
       pushed: [],
-      notify: (n) => set({ pushed: [{ ...n, id: uid(), at: now() }, ...get().pushed].slice(0, 200) }),
+      notify: (n) => {
+        const item: PushedNotification = { ...n, id: uid(), at: now() };
+        set({ pushed: [item, ...get().pushed].slice(0, 200) });
+        // system notification on this device when the item is for this user's portal and the tab is hidden
+        deviceNotifyIfHidden(item, get());
+      },
       readNotifications: [],
       markRead: (id) => set({ readNotifications: Array.from(new Set([...get().readNotifications, id])) }),
       markAllRead: (ids) => set({ readNotifications: Array.from(new Set([...get().readNotifications, ...ids])) }),
@@ -1329,7 +2129,7 @@ export const useAppStore = create<AppState>()(
       resetDemoData: () => {
         set({
           approvals: {}, executionLog: [], reports: [], intakeTasks: [], requisitions: [], scenario: null, audit: [], readNotifications: [], pushed: [], previousResult: null, candidate: null,
-          forms: {}, tsrs: [], powerBlocks: {}, rbp: { monthly: { status: 'DRAFT' }, rolling: { status: 'DRAFT' } }, jpoNotices: {}, escalations: [], directions: [], handoverNotes: {}, messages: [], acks: [], pinnedTaskIds: [], excludedTaskIds: [], myReportIds: [], dataIssueStatus: {},
+          forms: {}, tsrs: [], powerBlocks: {}, rbp: { monthly: { status: 'DRAFT' }, rolling: { status: 'DRAFT' } }, jpoNotices: {}, escalations: [], directions: [], handoverNotes: {}, messages: [], acks: [], pinnedTaskIds: [], excludedTaskIds: [], myReportIds: [], dataIssueStatus: {}, extensions: [],
         });
         get().resetTuning();
         get().addAudit({ action: 'DEMO_DATA_RESET', entityType: 'settings', entityId: 'all' });
@@ -1338,10 +2138,11 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'samanvay.v4',
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => localStorage),
       // v3: drop the old seeded execution records / manual TSRs (fake block ids) and
       // replace old seeded reports and requisitions with the corrected demo set.
+      // v4: every intake task carries its corridor (from its requisition / report, else the corridor active then).
       migrate: (persisted, version) => {
         const st = (persisted ?? {}) as Partial<AppState>;
         if (version < 3) {
@@ -1351,6 +2152,15 @@ export const useAppStore = create<AppState>()(
           st.tsrs = (st.tsrs ?? []).filter((t) => !/^TSR-010\d$/.test(t.id));
           st.reports = [...SEED_REPORTS, ...(st.reports ?? []).filter((r) => !isOldSeedReport(r))];
           st.requisitions = [...SEED_REQUISITIONS, ...(st.requisitions ?? []).filter((r) => !isOldSeedReq(r))];
+        }
+        if (version < 4) {
+          const fallback = st.corridorId ?? DEFAULT_CORRIDOR;
+          st.intakeTasks = (st.intakeTasks ?? []).map((t) => {
+            if (t.corridorId) return t;
+            const cid = st.requisitions?.find((r) => r.intakeTaskId === t.id)?.corridorId ?? st.reports?.find((r) => r.intakeTaskId === t.id)?.corridorId ?? fallback;
+            return { ...t, corridorId: cid, spec: { ...t.spec, corridorId: cid } };
+          });
+          st.extensions = st.extensions ?? [];
         }
         return st as AppState;
       },
@@ -1369,6 +2179,9 @@ export const useAppStore = create<AppState>()(
         weights: s.weights,
         rules: s.rules,
         iterations: s.iterations,
+        solver: s.solver,
+        importedFeeds: s.importedFeeds,
+        weatherOverride: s.weatherOverride,
         scenario: s.scenario,
         pinnedTaskIds: s.pinnedTaskIds,
         excludedTaskIds: s.excludedTaskIds,
@@ -1384,6 +2197,8 @@ export const useAppStore = create<AppState>()(
         directions: s.directions,
         audit: s.audit,
         executionLog: s.executionLog,
+        extensions: s.extensions,
+        deviceNotifications: s.deviceNotifications,
         messages: s.messages,
         acks: s.acks,
         requisitions: s.requisitions,

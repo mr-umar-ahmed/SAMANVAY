@@ -3,6 +3,7 @@
  * baseline computed like-for-like from the same snapshot, the method on
  * hover, and the seed / run footnote.
  */
+import type { ReactNode } from 'react';
 import { Info } from 'lucide-react';
 import type { Kpis } from '../../engine/types';
 import { useT } from '../../i18n';
@@ -10,7 +11,7 @@ import { StatTile } from '../../components/ui';
 import { SimLabel } from '../../components/ui/extras';
 import { compareKpi, formatKpi, formatKpiDelta, FEED_SEED, KPI_LABEL, KPI_METHOD, planStrings, type KpiKey } from './planMetrics';
 
-export function KpiStrip({ kpis, baseKpis, keys, runId, tour }: { kpis: Kpis; baseKpis: Kpis; keys: KpiKey[]; runId: number; tour?: string }) {
+export function KpiStrip({ kpis, baseKpis, keys, runId, tour, extra }: { kpis: Kpis; baseKpis: Kpis; keys: KpiKey[]; runId: number; tour?: string; /** extra tiles in the same grid (e.g. mean block confidence) */ extra?: ReactNode }) {
   const t = useT(planStrings);
   return (
     <div className="stack">
@@ -34,6 +35,7 @@ export function KpiStrip({ kpis, baseKpis, keys, runId, tour }: { kpis: Kpis; ba
             />
           );
         })}
+        {extra}
       </div>
       <div className="row-wrap tiny muted">
         <SimLabel kind="baseline" />

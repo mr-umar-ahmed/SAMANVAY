@@ -43,6 +43,7 @@ const ExecutionLogPage = lazy(() => import('./pages/shared/ExecutionLogPage'));
 const IntegrationPage = lazy(() => import('./pages/shared/IntegrationPage'));
 const MethodPage = lazy(() => import('./pages/shared/MethodPage'));
 const CopilotPage = lazy(() => import('./pages/shared/CopilotPage'));
+const WorkflowPage = lazy(() => import('./pages/shared/WorkflowPage'));
 
 // departments
 const DeptTodayPage = lazy(() => import('./pages/dept/DeptTodayPage'));
@@ -112,6 +113,7 @@ const deptChildren = (
     <Route path="reports" element={<IncidentsPage mode="dept" />} />
     <Route path="copilot" element={<CopilotPage />} />
     <Route path="method" element={<MethodPage />} />
+    <Route path="workflow" element={<WorkflowPage />} />
     <Route path="*" element={<NotFound />} />
   </>
 );
@@ -128,6 +130,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/install" element={<InstallPage />} />
+          <Route path="/workflow" element={<WorkflowPage />} />
 
           <Route path="/citizen" element={<CitizenShell />}>
             <Route index element={<CitizenHomePage />} />
@@ -163,6 +166,7 @@ export default function App() {
               <Route path="integration" element={<IntegrationPage />} />
               <Route path="copilot" element={<CopilotPage />} />
               <Route path="method" element={<MethodPage />} />
+              <Route path="workflow" element={<WorkflowPage />} />
               <Route path="*" element={<NotFound />} />
             </>
           )}
@@ -186,6 +190,7 @@ export default function App() {
               <Route path="execution" element={<ExecutionLogPage mode="control" />} />
               <Route path="copilot" element={<CopilotPage />} />
               <Route path="method" element={<MethodPage />} />
+              <Route path="workflow" element={<WorkflowPage />} />
               <Route path="*" element={<NotFound />} />
             </>
           )}
@@ -207,7 +212,9 @@ export default function App() {
               <Route path="integration" element={<IntegrationPage readOnly />} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="audit" element={<AuditPage />} />
+              <Route path="copilot" element={<CopilotPage />} />
               <Route path="method" element={<MethodPage />} />
+              <Route path="workflow" element={<WorkflowPage />} />
               <Route path="*" element={<NotFound />} />
             </>
           )}
@@ -221,6 +228,8 @@ export default function App() {
               <Route path="reports/:ref" element={<FieldReportPage tab="mine" />} />
               <Route path="caution" element={<FieldCautionPage />} />
               <Route path="train" element={<FieldTrainPage />} />
+              <Route path="copilot" element={<CopilotPage />} />
+              <Route path="workflow" element={<WorkflowPage />} />
               <Route path="*" element={<NotFound />} />
             </>
           )}

@@ -56,9 +56,9 @@ export function GrantWithChange({ open, onClose, snapshot, block, others, t351Pe
         </div>
         <KeyValue
           items={[
-            [t('newWindow'), <span className="mono num">{hhmm(start)}–{hhmm(end)} · {duration(span)}</span>],
-            [t('affected'), <span className="num">{ev.trains.length}</span>],
-            [t('weightedDelay'), <span className="num">{Math.round(ev.weightedDelayMin)} {t('minutes')}</span>],
+            [t('newWindow'), <span key="w" className="mono num">{hhmm(start)}–{hhmm(end)} · {duration(span)}</span>],
+            [t('affected'), <span key="a" className="num">{ev.trains.length}</span>],
+            [t('weightedDelay'), <span key="d" className="num">{Math.round(ev.weightedDelayMin)} {t('minutes')}</span>],
           ]}
         />
         {ev.trains.length > 0 && (

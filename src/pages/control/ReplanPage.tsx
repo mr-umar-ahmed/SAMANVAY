@@ -2,10 +2,11 @@
  * ReplanPage — Control re-plans after a failure (docs/v4-spec.md §3.6).
  *
  * The event is merged into the working scenario and the optimiser runs a
- * candidate off-thread; the working plan is untouched until Apply. The
- * engine has no fixed-block input, so the candidate re-optimises the whole
- * week: started and locked blocks are listed for context, and any of them
- * that move are flagged in the diff before Control applies it.
+ * candidate off-thread; the working plan is untouched until Apply. Concurred,
+ * granted, locked and started blocks are held fixed as solver constraints
+ * (store buildRequest + the locked / started blocks passed here); any that
+ * still move are flagged in the diff, and the candidate's safety conflicts
+ * are shown before Control applies it.
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -18,6 +19,8 @@ import type { Block, Dept, Kpis, Line, RunLine, Scenario, Snapshot } from '../..
 import { useT } from '../../i18n';
 import { Badge, Callout, Card, CardBody, CardHead, DataTable, EmptyState, Field, Modal, PageHeader, PlanPending, Spinner, StatTile, StatusBadge, type Column } from '../../components/ui';
 import { SimLabel } from '../../components/ui/extras';
+import { SafetyBanner } from '../../components/domain/SafetyBanner';
+import { SolverStamp } from '../../components/domain/SolverStamp';
 import { BlockDrawer } from '../../components/domain/BlockDrawer';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
@@ -97,7 +100,7 @@ const strings = {
     runDoneBody: '{n} blocks change against the working plan',
     runFailed: 'The candidate run failed',
     contextTitle: 'Started and locked blocks',
-    contextSub: 'Shown for context. The optimiser has no fixed-block input: a re-run re-optimises the whole week, and any of these that move are flagged in the diff.',
+    contextSub: 'Held fixed by the optimiser on every run, with every concurred and granted block. Any that still move are flagged in the diff.',
     contextEmpty: 'No block is started or locked on this corridor.',
     started: 'Started',
     locked: 'Locked',
@@ -207,7 +210,7 @@ const strings = {
     runDoneBody: 'कार्यकारी योजना की तुलना में {n} block बदलते हैं',
     runFailed: 'प्रत्याशी रन विफल रहा',
     contextTitle: 'शुरू और लॉक किए गए block',
-    contextSub: 'संदर्भ के लिए। ऑप्टिमाइज़र में स्थिर-block इनपुट नहीं है: पुनः रन पूरे सप्ताह को फिर से अनुकूलित करता है, और इनमें से जो भी हिलें वे अंतर तालिका में चिह्नित होते हैं।',
+    contextSub: 'हर run में ऑप्टिमाइज़र इन्हें, हर सहमत और प्रदत्त block के साथ, स्थिर रखता है। जो फिर भी हिलें वे अंतर तालिका में चिह्नित होते हैं।',
     contextEmpty: 'इस कॉरिडोर पर कोई block शुरू या लॉक नहीं है।',
     started: 'शुरू',
     locked: 'लॉक',
@@ -383,7 +386,7 @@ function Replan({ snapshot, reportId }: { snapshot: Snapshot; reportId: string |
   /* ── derived plan state ─────────────────────────────────── */
   const allWorking = useMemo(() => workingBlocks(snapshot, approvals), [snapshot, approvals]);
   const startedIds = useMemo(() => new Set(executionLog.filter((r) => r.corridorId === corridor.id && r.status === 'IN_PROGRESS').map((r) => r.blockId)), [executionLog, corridor.id]);
-  const contextBlocks = useMemo(() => allWorking.filter((x) => x.status === 'LOCKED' || startedIds.has(x.id)), [allWorking, startedIds]);
+  const contextBlocks = useMemo(() => allWorking.filter((x) => x.state === 'LOCKED' || startedIds.has(x.id)), [allWorking, startedIds]);
   const fixedKind = useMemo(() => {
     const m = new Map<string, 'started' | 'locked'>();
     for (const x of contextBlocks) m.set(x.id, startedIds.has(x.id) ? 'started' : 'locked');
@@ -515,6 +518,12 @@ function Replan({ snapshot, reportId }: { snapshot: Snapshot; reportId: string |
         }
       />
 
+      {candidate ? (
+        <SafetyBanner snapshot={candidate.snapshot} plan={candidate.snapshot.result.weekly.ai} kpis={candidate.snapshot.result.weekly.kpis} candidate tour="replan-safety" />
+      ) : (
+        <SafetyBanner snapshot={snapshot} plan={snapshot.result.weekly.ai} kpis={snapshot.result.weekly.kpis} tour="replan-safety" />
+      )}
+
       <div className="grid grid-main-aside" style={{ alignItems: 'start' }}>
         <div className="stack-lg">
           <Card tour="replan-diff">
@@ -545,6 +554,9 @@ function Replan({ snapshot, reportId }: { snapshot: Snapshot; reportId: string |
                 <EmptyState title={t('noCandidate')} />
               ) : (
                 <div className="stack">
+                  <div className="card-body" style={{ paddingBottom: 0 }}>
+                    <SolverStamp plan={candidate.snapshot.result.weekly.ai} />
+                  </div>
                   {fixedMoved > 0 && (
                     <div className="card-body" style={{ paddingBottom: 0 }}>
                       <Callout tone="warn">{t('fixedMoved', { n: fixedMoved })}</Callout>

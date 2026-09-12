@@ -6,9 +6,9 @@
  * requisitions needing action, notifications; and on the resources tab the
  * machines (7-day use from the plan) and gangs. Parameterised by the portal.
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCheck, ExternalLink, FileText, ListChecks, Power, PowerOff, Wrench } from 'lucide-react';
+import { Ban, Bell, CheckCheck, ExternalLink, FileText, ListChecks, Power, PowerOff, Wrench } from 'lucide-react';
 import { useAppStore, type ScenarioState } from '../../store/useAppStore';
 import type { Dept, Machine, Task } from '../../engine/types';
 import { cautionOrders, disconnectionNoticesWeek, placement, workingBlocks, type WorkingBlock } from '../../engine/select';
@@ -18,7 +18,7 @@ import { can, type PortalId } from '../../auth/portals';
 import { useT } from '../../i18n';
 import { common, type CommonKey } from '../../i18n/common';
 import { DEPT_LABEL, dateLabel, duration, kmRange, lineLabel, num, timeAgo } from '../../lib/format';
-import { ArciBar, Badge, Card, CardBody, CardHead, DataTable, DeptBadge, EmptyState, PageHeader, PlanPending, StatTile, Tabs, UrgencyBadge, type Column, type Tone } from '../../components/ui';
+import { ArciBar, Badge, Card, CardBody, CardHead, DataTable, DeptBadge, EmptyState, Modal, PageHeader, PlanPending, StatTile, Tabs, UrgencyBadge, type Column, type Tone } from '../../components/ui';
 import { BarChart } from '../../components/viz';
 import { SeedStamp, SimLabel } from '../../components/ui/extras';
 import { BlockDrawer } from '../../components/domain/BlockDrawer';
@@ -84,6 +84,20 @@ const strings = {
     stConcurred: 'Concurred',
     stGranted: 'Granted',
     stLocked: 'Locked',
+    stRefused: 'Refused by Control',
+    stSuperseded: 'Changed by re-plan',
+    supersededHint: 'Changed by a re-plan — the planning cell must send the new block again',
+    closedHint: 'Concurrence is closed — the block is {state}',
+    object: 'Object',
+    objectTitle: 'Objection to {block}',
+    objectBody: '{dept} objects to block {block} ({window}, {section}). The objection withdraws any {dept} concurrence and notifies the planning cell and Control.',
+    objectReason: 'Reason',
+    objectPh: 'e.g. machine not available that night, conflicting work on the same section',
+    objectSend: 'Record objection',
+    objected: 'Objection recorded',
+    objectedBody: '{dept} objection on {block} — planning cell and Control notified',
+    myObjection: 'You objected: {reason}',
+    cancel: 'Cancel',
     myConcur: 'You concurred',
     incharge: 'In-charge {name}',
     noPartner: 'Own block',
@@ -221,6 +235,20 @@ const strings = {
     stConcurred: 'सहमति प्राप्त',
     stGranted: 'प्रदान',
     stLocked: 'लॉक',
+    stRefused: 'कंट्रोल द्वारा अस्वीकृत',
+    stSuperseded: 'पुनः योजना से बदला',
+    supersededHint: 'पुनः योजना से बदला — योजना प्रकोष्ठ नया ब्लॉक फिर भेजे',
+    closedHint: 'सहमति बंद है — ब्लॉक {state} है',
+    object: 'आपत्ति',
+    objectTitle: '{block} पर आपत्ति',
+    objectBody: '{dept} ब्लॉक {block} ({window}, {section}) पर आपत्ति करता है। आपत्ति से {dept} की कोई भी सहमति वापस हो जाती है और योजना प्रकोष्ठ व कंट्रोल को सूचना जाती है।',
+    objectReason: 'कारण',
+    objectPh: 'जैसे उस रात मशीन उपलब्ध नहीं, उसी सेक्शन पर टकराता कार्य',
+    objectSend: 'आपत्ति दर्ज करें',
+    objected: 'आपत्ति दर्ज',
+    objectedBody: '{block} पर {dept} आपत्ति — योजना प्रकोष्ठ व कंट्रोल को सूचना',
+    myObjection: 'आपकी आपत्ति: {reason}',
+    cancel: 'रद्द करें',
     myConcur: 'आपने सहमति दी',
     incharge: 'प्रभारी {name}',
     noPartner: 'स्वयं का ब्लॉक',
@@ -361,7 +389,11 @@ export default function DeptTodayPage({ tab = 'today' }: DeptTodayPageProps) {
   const weekBlocks = useMemo(() => blocks.filter((b) => b.status !== 'REFUSED' && b.departments.includes(dept)).sort((a, b) => a.day - b.day || a.start - b.start), [blocks, dept]);
   const tonight = useMemo(() => weekBlocks.filter((b) => b.day === 0), [weekBlocks]);
   const nextBlock = useMemo(() => weekBlocks.find((b) => b.day > 0) ?? null, [weekBlocks]);
-  const awaiting = useMemo(() => weekBlocks.filter((b) => b.status === 'PROPOSED' && !!b.approval?.proposedAt && !b.approval.concur[dept]), [weekBlocks, dept]);
+  // open for concurrence = sent and not yet granted (workflow state from select.workflowState)
+  const awaiting = useMemo(() => weekBlocks.filter((b) => b.state === 'PROPOSED' && !b.approval?.concur[dept]), [weekBlocks, dept]);
+  const [objecting, setObjecting] = useState<WorkingBlock | null>(null);
+  const [objReason, setObjReason] = useState('');
+  const objectBlock = useAppStore((s) => s.object);
 
   const deptTasks = useMemo(() => (snapshot ? snapshot.tasks.filter((x) => x.dept === dept) : []), [snapshot, dept]);
   const byDay = useMemo(() => new Map((snapshot?.result.weekly.ai.scheduled ?? []).map((s) => [s.taskId, s.day])), [snapshot]);
@@ -401,17 +433,39 @@ export default function DeptTodayPage({ tab = 'today' }: DeptTodayPageProps) {
   /* ── helpers ─────────────────────────────────────────────── */
   const dueText = (x: Task) => (x.daysOverdue > 0 ? t('overdueBy', { n: x.daysOverdue }) : x.daysOverdue === 0 ? t('dueToday') : t('dueIn', { n: -x.daysOverdue }));
   const stateOf = (b: WorkingBlock): { label: string; tone: Tone } => {
-    if (b.status === 'LOCKED') return { label: t('stLocked'), tone: 'info' };
-    if (b.status === 'GRANTED') return { label: t('stGranted'), tone: 'ok' };
-    if (!b.approval?.proposedAt) return { label: t('stDraft'), tone: 'gray' };
-    return b.concurred ? { label: t('stConcurred'), tone: 'ok' } : { label: t('stAwaiting'), tone: 'warn' };
+    switch (b.state) {
+      case 'LOCKED':
+        return { label: t('stLocked'), tone: 'info' };
+      case 'GRANTED':
+        return { label: t('stGranted'), tone: 'ok' };
+      case 'REFUSED':
+        return { label: t('stRefused'), tone: 'crit' };
+      case 'SUPERSEDED':
+        return { label: t('stSuperseded'), tone: 'warn' };
+      case 'CONCURRED':
+        return { label: t('stConcurred'), tone: 'ok' };
+      case 'PROPOSED':
+        return { label: t('stAwaiting'), tone: 'warn' };
+      default:
+        return { label: t('stDraft'), tone: 'gray' };
+    }
   };
   const hoursByDay = (uses: { day: number; start: number; end: number }[]) => Array.from({ length: 7 }, (_, d) => uses.filter((u) => u.day === d).reduce((s, u) => s + (u.end - u.start) / 60, 0));
   const dayCat = (d: number) => (dates[d] ? dateLabel(dates[d]).slice(0, 6) : `D${d}`);
 
+  // the store refuses (and toasts why) when the block is not open for concurrence
   const onConcur = (b: WorkingBlock) => {
-    concur(b.id, dept);
-    toast({ title: t('concurred'), body: t('concurredBody', { dept: deptShort, block: `${b.id} · ${b.sectionText}` }), tone: 'ok' });
+    if (concur(b.id, dept)) toast({ title: t('concurred'), body: t('concurredBody', { dept: deptShort, block: `${b.id} · ${b.sectionText}` }), tone: 'ok' });
+  };
+  const openObject = (b: WorkingBlock) => {
+    setObjReason('');
+    setObjecting(b);
+  };
+  const onObject = () => {
+    if (!objecting || !objReason.trim()) return;
+    if (!objectBlock(objecting.id, dept, objReason.trim())) return;
+    toast({ title: t('objected'), body: t('objectedBody', { dept: deptShort, block: objecting.id }), tone: 'warn' });
+    setObjecting(null);
   };
 
   const onAcknowledge = (id: string) => {
@@ -509,6 +563,10 @@ export default function DeptTodayPage({ tab = 'today' }: DeptTodayPageProps) {
           <span className="stack" style={{ gap: 2 }}>
             <Badge tone={s.tone}>{s.label}</Badge>
             {b.approval?.concur[dept] && <span className="tiny" style={{ color: 'var(--ok)' }}>{t('myConcur')}</span>}
+            {(() => {
+              const mine = (b.approval?.objections ?? []).filter((o) => o.dept === dept).pop();
+              return mine && !b.approval?.concur[dept] ? <span className="tiny" style={{ color: 'var(--crit)' }}>{t('myObjection', { reason: mine.reason })}</span> : null;
+            })()}
           </span>
         );
       },
@@ -536,22 +594,40 @@ export default function DeptTodayPage({ tab = 'today' }: DeptTodayPageProps) {
       key: 'action',
       header: t('colAction'),
       render: (b) => {
-        if (b.approval?.concur[dept] || b.status !== 'PROPOSED') return null;
-        const sent = !!b.approval?.proposedAt;
-        const hint = !canConcur ? t('noConcurCap', { officer }) : !sent ? t('notSent') : undefined;
+        // concurrence / objection are open only on sent blocks that are not granted (PROPOSED, or CONCURRED for an objection)
+        if (b.state === 'GRANTED' || b.state === 'LOCKED' || b.state === 'REFUSED') return null;
+        const open = b.state === 'PROPOSED' || b.state === 'CONCURRED';
+        const mineIn = !!b.approval?.concur[dept];
+        const hint = !canConcur ? t('noConcurCap', { officer }) : b.state === 'DRAFT' ? t('notSent') : b.state === 'SUPERSEDED' ? t('supersededHint') : !open ? t('closedHint', { state: stateOf(b).label }) : undefined;
         return (
-          <button
-            type="button"
-            className="btn btn-sm btn-ok"
-            disabled={!canConcur || !sent}
-            title={hint}
-            onClick={(e) => {
-              e.stopPropagation();
-              onConcur(b);
-            }}
-          >
-            <CheckCheck /> {t('concur')}
-          </button>
+          <span className="row" style={{ gap: 4 }}>
+            {!mineIn && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ok"
+                disabled={!canConcur || b.state !== 'PROPOSED'}
+                title={hint}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConcur(b);
+                }}
+              >
+                <CheckCheck /> {t('concur')}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={!canConcur || !open}
+              title={hint ?? t('object')}
+              onClick={(e) => {
+                e.stopPropagation();
+                openObject(b);
+              }}
+            >
+              <Ban /> {t('object')}
+            </button>
+          </span>
         );
       },
     },
@@ -982,6 +1058,32 @@ export default function DeptTodayPage({ tab = 'today' }: DeptTodayPageProps) {
           </Card>
         </>
       )}
+
+      <Modal
+        open={!!objecting}
+        onClose={() => setObjecting(null)}
+        title={objecting ? t('objectTitle', { block: objecting.id }) : ''}
+        footer={
+          <>
+            <button type="button" className="btn" onClick={() => setObjecting(null)}>
+              {t('cancel')}
+            </button>
+            <button type="button" className="btn btn-danger" disabled={!objReason.trim()} onClick={onObject}>
+              <Ban /> {t('objectSend')}
+            </button>
+          </>
+        }
+      >
+        {objecting && (
+          <div className="stack">
+            <div className="small">{t('objectBody', { dept: deptShort, block: objecting.id, window: `${dateLabel(objecting.date)} ${objecting.startText}–${objecting.endText}`, section: `${objecting.sectionText} ${objecting.line}` })}</div>
+            <div className="field">
+              <label htmlFor="obj-reason">{t('objectReason')}</label>
+              <textarea id="obj-reason" className="textarea" rows={3} value={objReason} placeholder={t('objectPh')} onChange={(e) => setObjReason(e.target.value)} />
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <BlockDrawer blockId={drawer.blockId} onClose={() => drawer.close('block')} />
       <TaskDrawer taskId={drawer.taskId} onClose={() => drawer.close('task')} />

@@ -19,6 +19,7 @@ import { common } from '../../i18n/common';
 import { dateLabel, download, num, timeAgo } from '../../lib/format';
 import { Badge, Callout, Card, CardBody, CardFoot, CardHead, DataTable, DeptBadge, Field, KeyValue, Modal, PageHeader, Segmented, StatTile, Tabs, type Column } from '../../components/ui';
 import { SimLabel, Slider } from '../../components/ui/extras';
+import { useCorridorSwitch } from '../../components/domain/planHooks';
 
 /** The worker is never sent a seed by the store, so the engine default applies (engine/worker.ts). */
 const ENGINE_SEED = 26027;
@@ -97,8 +98,6 @@ const strings = {
     corridorTitle: 'Corridor',
     corridorSub: 'Switching clears the workflow records keyed to the current blocks (approvals, execution, forms) and re-plans.',
     corridorSwitch: 'Switch corridor',
-    corridorConfirm: 'Switch to {name}? Approvals, execution records, forms and power-block records of the current corridor are cleared.',
-    corridorDone: 'Corridor switched to {name}',
     resetTitle: 'Demo data',
     resetSub: 'Clears approvals, execution, reports, requisitions, TSRs, forms, directions, escalations, notifications and the audit trail, then re-plans.',
     resetBtn: 'Reset demo data',
@@ -206,8 +205,6 @@ const strings = {
     corridorTitle: 'कॉरिडोर',
     corridorSub: 'बदलने पर वर्तमान ब्लॉकों से जुड़े रिकॉर्ड (अनुमोदन, निष्पादन, प्रपत्र) साफ़ होते हैं और पुनः योजना बनती है।',
     corridorSwitch: 'कॉरिडोर बदलें',
-    corridorConfirm: '{name} पर जाएँ? वर्तमान कॉरिडोर के अनुमोदन, निष्पादन रिकॉर्ड, प्रपत्र और पावर-ब्लॉक रिकॉर्ड साफ़ होंगे।',
-    corridorDone: 'कॉरिडोर {name} पर बदला',
     resetTitle: 'डेमो डेटा',
     resetSub: 'अनुमोदन, निष्पादन, रिपोर्ट, requisition, TSR, प्रपत्र, निर्देश, एस्केलेशन, सूचनाएँ और ऑडिट ट्रेल साफ़ कर पुनः योजना बनाता है।',
     resetBtn: 'डेमो डेटा रीसेट करें',
@@ -264,7 +261,6 @@ interface UserRow {
 
 type Confirm =
   | { kind: 'remove'; user: UserRow }
-  | { kind: 'corridor'; id: string }
   | { kind: 'reset' }
   | { kind: 'photos'; n: number }
   | { kind: 'import'; file: string; payload: { state: Record<string, unknown>; version?: number } };
@@ -296,7 +292,6 @@ export default function AdminPage() {
   const theme = useAppStore((s) => s.theme);
   const audioMuted = useAppStore((s) => s.audioMuted);
   const setIterations = useAppStore((s) => s.setIterations);
-  const setCorridor = useAppStore((s) => s.setCorridor);
   const setLanguage = useAppStore((s) => s.setLanguage);
   const setTheme = useAppStore((s) => s.setTheme);
   const setAudioMuted = useAppStore((s) => s.setAudioMuted);
@@ -314,14 +309,15 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [iterDraft, setIterDraft] = useState<number | null>(null);
-  /** null = follow the current corridor (it can also be switched from the top bar) */
-  const [corridorPick, setCorridorPick] = useState<string | null>(null);
+  /** the pick is tied to the corridor it was made on, so a switch (here or from the top bar) resets the select */
+  const [corridorPick, setCorridorPick] = useState<{ from: string; to: string } | null>(null);
+  const { request: requestCorridor, dialog: corridorDialog } = useCorridorSwitch();
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [storageVersion, setStorageVersion] = useState(0);
 
   const canAdmin = can(user, 'admin');
   const running = planStatus === 'running';
-  const corridorDraft = corridorPick ?? corridorId;
+  const corridorDraft = corridorPick && corridorPick.from === corridorId ? corridorPick.to : corridorId;
 
   const users: UserRow[] = useMemo(() => {
     void usersVersion;
@@ -362,8 +358,6 @@ export default function AdminPage() {
     };
   }, [tab, storageVersion]);
 
-  const corridorName = (id: string) => CORRIDOR_LIST.find((c) => c.id === id)?.name ?? id;
-
   /* ── actions ─────────────────────────────────────────────── */
   const createUser = async () => {
     setBusy(true);
@@ -390,10 +384,6 @@ export default function AdminPage() {
       addAudit({ action: 'USER_REMOVED', entityType: 'user', entityId: c.user.id, detail: `${c.user.name} · ${c.user.email}` });
       toast({ title: t('userRemoved'), body: c.user.email, tone: 'info' });
       setUsersVersion((v) => v + 1);
-    } else if (c.kind === 'corridor') {
-      setCorridor(c.id);
-      setCorridorPick(null);
-      toast({ title: t('corridorDone', { name: corridorName(c.id) }), tone: 'ok' });
     } else if (c.kind === 'reset') {
       resetDemoData();
       toast({ title: t('resetDone'), tone: 'ok' });
@@ -458,8 +448,6 @@ export default function AdminPage() {
     switch (c.kind) {
       case 'remove':
         return t('removeBody', { name: c.user.name, email: c.user.email });
-      case 'corridor':
-        return t('corridorConfirm', { name: corridorName(c.id) });
       case 'reset':
         return t('resetConfirm');
       case 'photos':
@@ -468,7 +456,7 @@ export default function AdminPage() {
         return t('importConfirm', { file: c.file });
     }
   };
-  const confirmTitle = (c: Confirm): string => (c.kind === 'remove' ? t('removeTitle') : c.kind === 'corridor' ? t('corridorSwitch') : c.kind === 'reset' ? t('resetBtn') : c.kind === 'photos' ? t('clearPhotos') : t('importState'));
+  const confirmTitle = (c: Confirm): string => (c.kind === 'remove' ? t('removeTitle') : c.kind === 'reset' ? t('resetBtn') : c.kind === 'photos' ? t('clearPhotos') : t('importState'));
 
   const roleLabel = (r: RoleId) => ROLES[r].label[language === 'hi' ? 'hi' : 'en'];
 
@@ -610,7 +598,7 @@ export default function AdminPage() {
               <CardBody>
                 <div className="row-wrap" style={{ alignItems: 'flex-end' }}>
                   <Field label={tc('corridor')} htmlFor="adm-corridor">
-                    <select id="adm-corridor" className="select" value={corridorDraft} onChange={(e) => setCorridorPick(e.target.value)}>
+                    <select id="adm-corridor" className="select" value={corridorDraft} onChange={(e) => setCorridorPick({ from: corridorId, to: e.target.value })}>
                       {CORRIDOR_LIST.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name} ({c.code}) · {c.division}
@@ -618,7 +606,7 @@ export default function AdminPage() {
                       ))}
                     </select>
                   </Field>
-                  <button type="button" className="btn btn-sm" onClick={() => setConfirm({ kind: 'corridor', id: corridorDraft })} disabled={!canAdmin || corridorDraft === corridorId}>
+                  <button type="button" className="btn btn-sm" onClick={() => requestCorridor(corridorDraft)} disabled={!canAdmin || corridorDraft === corridorId}>
                     {t('corridorSwitch')}
                   </button>
                 </div>
@@ -805,14 +793,15 @@ export default function AdminPage() {
             <button type="button" className="btn" onClick={() => setConfirm(null)}>
               {tc('cancel')}
             </button>
-            <button type="button" className={`btn ${confirm?.kind === 'corridor' ? 'btn-primary' : 'btn-danger'}`} onClick={() => void doConfirm()}>
+            <button type="button" className="btn btn-danger" onClick={() => void doConfirm()}>
               {t('confirm')}
             </button>
           </>
         }
       >
-        {confirm && <Callout tone={confirm.kind === 'corridor' ? 'warn' : 'crit'}>{confirmText(confirm)}</Callout>}
+        {confirm && <Callout tone="crit">{confirmText(confirm)}</Callout>}
       </Modal>
+      {corridorDialog}
     </div>
   );
 }

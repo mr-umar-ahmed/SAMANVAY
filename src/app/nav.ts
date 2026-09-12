@@ -89,6 +89,7 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
       items: [
         { route: '/app/division/feeds', label: { en: 'Feeds & twin', hi: 'फ़ीड्स व डिजिटल ट्विन' }, icon: 'share' },
         { route: '/app/division/audit', label: { en: 'Audit trail', hi: 'ऑडिट ट्रेल' }, icon: 'clipboard' },
+        { route: '/app/division/copilot', label: { en: 'Copilot', hi: 'कोपायलट' }, icon: 'sparkles' },
         { route: '/app/division/admin', label: { en: 'Admin', hi: 'व्यवस्थापक' }, icon: 'settings' },
       ],
     },
@@ -102,7 +103,12 @@ export const PORTAL_NAV: Record<PortalId, NavGroup[]> = {
         { route: '/app/field/reports', label: { en: 'My reports', hi: 'मेरी रिपोर्ट' }, icon: 'inbox', mobile: true },
         { route: '/app/field/caution', label: { en: 'Caution orders', hi: 'सतर्कता आदेश' }, icon: 'file-text', mobile: true, tour: 'nav-field-caution' },
         { route: '/app/field/train', label: { en: 'My train', hi: 'मेरी ट्रेन' }, icon: 'train' },
+        { route: '/app/field/copilot', label: { en: 'Copilot', hi: 'कोपायलट' }, icon: 'sparkles' },
       ],
+    },
+    {
+      label: { en: 'Help', hi: 'सहायता' },
+      items: [{ route: '/app/field/workflow', label: { en: 'Workflow (8 steps)', hi: 'कार्य-प्रवाह (8 चरण)' }, icon: 'compass', tour: 'nav-workflow' }],
     },
   ],
   citizen: [
@@ -145,7 +151,10 @@ function deptNav(p: 'tms' | 'smms' | 'tdms'): NavGroup[] {
 
 const METHOD = (portal: PortalId): NavGroup => ({
   label: { en: 'Help', hi: 'सहायता' },
-  items: [{ route: `/app/${portal}/method`, label: { en: 'How it works', hi: 'यह कैसे काम करता है' }, icon: 'book', tour: 'nav-method' }],
+  items: [
+    { route: `/app/${portal}/method`, label: { en: 'How it works', hi: 'यह कैसे काम करता है' }, icon: 'book', tour: 'nav-method' },
+    { route: `/app/${portal}/workflow`, label: { en: 'Workflow (8 steps)', hi: 'कार्य-प्रवाह (8 चरण)' }, icon: 'compass', tour: 'nav-workflow' },
+  ],
 });
 for (const p of ['control', 'planning', 'tms', 'smms', 'tdms', 'division'] as PortalId[]) PORTAL_NAV[p].push(METHOD(p));
 

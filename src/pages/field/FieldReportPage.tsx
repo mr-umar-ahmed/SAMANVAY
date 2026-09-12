@@ -8,11 +8,12 @@
  *  Mine: reports I sent (by my name) with status, and the blocks I recorded.
  */
 import { useMemo, useState, type FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronRight, Crosshair, MapPin, Send, Train as TrainIcon } from 'lucide-react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ChevronRight, Crosshair, Lightbulb, MapPin, Send, Train as TrainIcon } from 'lucide-react';
 import { deptForCategory, useAppStore, type HazardReport, type ReportCategory, type ReportStatus } from '../../store/useAppStore';
 import { getCorridor } from '../../engine/corridors.js';
-import { livePositions, workingBlocks } from '../../engine/select';
+import { livePositions, severityFactsAt, workingBlocks } from '../../engine/select';
+import { computeSeverity, SEVERITY_THRESHOLDS, suggestCategory } from '../../lib/triage';
 import type { Corridor, Dept, Line } from '../../engine/types';
 import { useT } from '../../i18n';
 import { DEPT_LABEL, hhmm, nowMinuteIST, timeAgo } from '../../lib/format';
@@ -26,6 +27,7 @@ export interface FieldReportPageProps {
 }
 
 type Severity = 'low' | 'medium' | 'high';
+type SeverityChoice = Severity | 'auto';
 
 const strings = {
   en: {
@@ -91,6 +93,39 @@ const strings = {
     cat_obstruction: 'Obstruction',
     cat_fire: 'Fire',
     cat_other: 'Other',
+    sevAuto: 'Rule table',
+    sevAutoHint: 'Leave on “Rule table” unless you are sure: severity is then computed from the category, the next train at this spot, the line and any TSR in force.',
+    sevPreview: 'Rule table now gives: {level} ({points} points)',
+    sevThresholds: 'High at {high} points or more, medium at {medium}–{mediumTop}, low below.',
+    sevNeedsPlan: 'Next-train facts appear once the plan has run and a km is given.',
+    suggestTitle: 'From your note this looks like {cat}',
+    suggestWords: 'words: {words}',
+    suggestPick: 'Pick the defect:',
+    catName_track: 'a track defect',
+    catName_signal: 'a signal / points fault',
+    catName_ohe: 'an OHE fault',
+    catName_lc: 'a level-crossing gate problem',
+    catName_fire: 'a fire',
+    catName_obstruction: 'an obstruction',
+    catName_other: 'something else',
+    sentTitle: 'Report {ref} sent',
+    sentRouted: 'Routed to {dept}.',
+    sentSeverity: 'Severity {level}, computed by the rule table',
+    sentChosen: 'Severity {level}, as you chose',
+    sentOpen: 'Open report',
+    sentNote: 'Rule-based points table, not a model. Control verifies every report.',
+    lvl_high: 'high',
+    lvl_medium: 'medium',
+    lvl_low: 'low',
+    f_category: 'Category: {cat} (+{p})',
+    f_nextTrain: 'Next train due here in {min} min (+{p})',
+    f_nextTrainUnknown: 'Next train at this spot not known (+0)',
+    f_premium: 'Next train is a premium service (+1)',
+    f_mainLine: 'On a running line (+1)',
+    f_offLine: 'Running line not identified (+0)',
+    f_tsr: 'Speed restriction already in force here (−1)',
+    f_nextNo: 'Next train: {no} (timetable)',
+    sevComputedBadge: 'computed',
   },
   hi: {
     title: 'घटना की रिपोर्ट',
@@ -155,6 +190,39 @@ const strings = {
     cat_obstruction: 'अवरोध',
     cat_fire: 'आग',
     cat_other: 'अन्य',
+    sevAuto: 'नियम तालिका',
+    sevAutoHint: 'पक्का न हो तो “नियम तालिका” रहने दें: तब गंभीरता श्रेणी, इस स्थान पर अगली ट्रेन, लाइन और लागू TSR से गणित होती है।',
+    sevPreview: 'नियम तालिका अभी: {level} ({points} अंक)',
+    sevThresholds: '{high} या अधिक अंक पर अधिक, {medium}–{mediumTop} पर मध्यम, उससे कम पर कम।',
+    sevNeedsPlan: 'योजना चलने और किमी दर्ज होने पर अगली ट्रेन के तथ्य दिखेंगे।',
+    suggestTitle: 'आपकी टिप्पणी से यह {cat} लगता है',
+    suggestWords: 'शब्द: {words}',
+    suggestPick: 'दोष चुनें:',
+    catName_track: 'ट्रैक दोष',
+    catName_signal: 'सिग्नल / पॉइंट दोष',
+    catName_ohe: 'OHE दोष',
+    catName_lc: 'समपार फाटक की समस्या',
+    catName_fire: 'आग',
+    catName_obstruction: 'अवरोध',
+    catName_other: 'कुछ और',
+    sentTitle: 'रिपोर्ट {ref} भेजी गई',
+    sentRouted: '{dept} को भेजी गई।',
+    sentSeverity: 'गंभीरता {level}, नियम तालिका से गणित',
+    sentChosen: 'गंभीरता {level}, आपके चयन अनुसार',
+    sentOpen: 'रिपोर्ट खोलें',
+    sentNote: 'नियम-आधारित अंक तालिका, कोई मॉडल नहीं। हर रिपोर्ट कंट्रोल जाँचता है।',
+    lvl_high: 'अधिक',
+    lvl_medium: 'मध्यम',
+    lvl_low: 'कम',
+    f_category: 'श्रेणी: {cat} (+{p})',
+    f_nextTrain: 'अगली ट्रेन यहाँ {min} मिनट में (+{p})',
+    f_nextTrainUnknown: 'इस स्थान पर अगली ट्रेन ज्ञात नहीं (+0)',
+    f_premium: 'अगली ट्रेन प्रीमियम सेवा है (+1)',
+    f_mainLine: 'रनिंग लाइन पर (+1)',
+    f_offLine: 'रनिंग लाइन पहचानी नहीं गई (+0)',
+    f_tsr: 'यहाँ पहले से गति प्रतिबंध लागू (−1)',
+    f_nextNo: 'अगली ट्रेन: {no} (समय-सारणी)',
+    sevComputedBadge: 'गणित',
   },
 } as const;
 
@@ -178,6 +246,26 @@ const DEFECTS: { id: string; key: Key; cat: ReportCategory }[] = [
 ];
 
 const STATUS_TONE: Record<ReportStatus, Tone> = { UNVERIFIED: 'warn', TRIAGED: 'info', TASK: 'blue', RESOLVED: 'ok', REJECTED: 'gray' };
+const SEV_TONE: Record<Severity, Tone> = { high: 'crit', medium: 'warn', low: 'gray' };
+
+type Factor = { key: 'category' | 'nextTrain' | 'nextTrainUnknown' | 'premium' | 'mainLine' | 'offLine' | 'tsr' | 'nextNo'; params: Record<string, string | number> };
+
+/** The store keeps the severity reasons as English sentences (lib/triage); read them back as factors to translate. */
+function parseReasons(reasons: string[] | undefined): Factor[] {
+  const out: Factor[] = [];
+  for (const r of reasons ?? []) {
+    let m: RegExpMatchArray | null;
+    if ((m = r.match(/^Category "(\w+)" \(\+(\d+)\)/))) out.push({ key: 'category', params: { cat: m[1], p: Number(m[2]) } });
+    else if ((m = r.match(/^Next train due in (\d+) min \(\+(\d+)\)/))) out.push({ key: 'nextTrain', params: { min: Number(m[1]), p: Number(m[2]) } });
+    else if (/^Next train at this location not known/.test(r)) out.push({ key: 'nextTrainUnknown', params: {} });
+    else if (/^Next train is a premium/.test(r)) out.push({ key: 'premium', params: {} });
+    else if (/^On a running line/.test(r)) out.push({ key: 'mainLine', params: {} });
+    else if (/^Running line not identified/.test(r)) out.push({ key: 'offLine', params: {} });
+    else if (/^Speed restriction already in force/.test(r)) out.push({ key: 'tsr', params: {} });
+    else if ((m = r.match(/^Next train: (\S+)/))) out.push({ key: 'nextNo', params: { no: m[1] } });
+  }
+  return out;
+}
 const deptText = (d: Dept) => `${DEPT_LABEL[d].short} (${DEPT_LABEL[d].system})`;
 
 export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
@@ -208,13 +296,27 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
   const [loc, setLoc] = useState<LocationValue>({});
   const [line, setLine] = useState<Line | ''>('');
   const [defect, setDefect] = useState<string>('other');
-  const [severity, setSeverity] = useState<Severity>('medium');
+  const [severity, setSeverity] = useState<SeverityChoice>('auto');
   const [note, setNote] = useState('');
   const [trainNo, setTrainNo] = useState(isLp ? lastTrainNo ?? '' : '');
   const [error, setError] = useState<string | null>(null);
 
   const chosen = DEFECTS.find((d) => d.id === defect) ?? DEFECTS[DEFECTS.length - 1];
   const routedDept = deptForCategory(chosen.cat);
+  const tsrs = useAppStore((s) => s.tsrs);
+  const [params] = useSearchParams();
+  const sentId = params.get('sent');
+
+  /* keyword suggestion from the note (rule-based, EN / HI words) — the user picks the defect */
+  const suggestion = useMemo(() => suggestCategory(note), [note]);
+  const suggestOthers = suggestion && suggestion.category !== chosen.cat ? DEFECTS.filter((d) => d.cat === suggestion.category) : [];
+
+  /* live preview of the rule table at the chosen location (same inputs the store uses on submit) */
+  const preview = useMemo(() => {
+    const snap = snapshot && snapshot.corridor.id === corridor.id ? snapshot : null;
+    const facts = severityFactsAt(snap, tsrs, { km: loc.km, line: line || undefined, day: 0, minute: nowMinuteIST() });
+    return { facts, sev: computeSeverity({ category: chosen.cat, ...facts }) };
+  }, [snapshot, corridor.id, tsrs, loc.km, line, chosen.cat]);
 
   /* my train's timetable position now (WTT-derived, plan day 0) */
   const trainPos = useMemo(() => {
@@ -263,7 +365,8 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
       lang: language,
       description: text ? `${label}: ${text}` : label,
       category: chosen.cat,
-      severity,
+      // 'auto': the store computes severity from the timetable / TSR facts at the location
+      severity: severity === 'auto' ? undefined : severity,
       photoId: photo?.photoId,
       thumbDataUrl: photo?.thumb,
       lat: loc.lat,
@@ -275,12 +378,28 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
       corridorId: corridor.id,
       trainNumber: trainNo.trim() || undefined,
     });
-    toast({ title: t('toastSubmitted', { ref: rep.id, dept: rep.dept ? deptText(rep.dept) : t('routesControl') }), tone: 'ok' });
+    const sevText = rep.severity ? (rep.severityAuto ? t('sentSeverity', { level: t(`lvl_${rep.severity}` as Key) }) : t('sentChosen', { level: t(`lvl_${rep.severity}` as Key) })) : undefined;
+    toast({ title: t('toastSubmitted', { ref: rep.id, dept: rep.dept ? deptText(rep.dept) : t('routesControl') }), body: sevText, tone: 'ok' });
     setPhoto(null);
     setLoc({});
     setNote('');
-    nav(`/app/field/reports/${encodeURIComponent(rep.id)}`);
+    setSeverity('auto');
+    nav(`/app/field/reports?sent=${encodeURIComponent(rep.id)}`);
   };
+
+  const factorText = (f: Factor) => {
+    switch (f.key) {
+      case 'category':
+        return t('f_category', { cat: t(`catName_${String(f.params.cat)}` as Key), p: f.params.p });
+      case 'nextTrain':
+        return t('f_nextTrain', { min: f.params.min, p: f.params.p });
+      case 'nextNo':
+        return t('f_nextNo', { no: f.params.no });
+      default:
+        return t(`f_${f.key}` as Key);
+    }
+  };
+  const sent = sentId ? reports.find((r) => r.id === sentId) ?? null : null;
 
   const reportId = ref ?? drawer.reportId;
   const closeReport = () => (ref ? nav('/app/field/reports') : drawer.close('report'));
@@ -353,6 +472,23 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
             <CardHead title={t('defect')} right={routedDept ? <DeptBadge dept={routedDept} /> : <Badge tone="gray">{t('routesControl')}</Badge>} />
             <CardBody>
               <div className="stack-lg">
+                {suggestion && suggestOthers.length > 0 && (
+                  <Callout tone="info" icon={<Lightbulb />}>
+                    <div className="stack" style={{ gap: 6 }}>
+                      <span>
+                        <b>{t('suggestTitle', { cat: t(`catName_${suggestion.category}` as Key) })}</b> <span className="muted small">({t('suggestWords', { words: suggestion.matched.join(', ') })})</span>
+                      </span>
+                      <div className="row-wrap">
+                        <span className="small">{t('suggestPick')}</span>
+                        {suggestOthers.map((d) => (
+                          <button key={d.id} type="button" className="btn btn-sm" style={{ minHeight: 40 }} onClick={() => setDefect(d.id)}>
+                            {t(d.key)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </Callout>
+                )}
                 <div className="row-wrap" role="group" aria-label={t('defect')}>
                   {DEFECTS.map((d) => {
                     const on = d.id === defect;
@@ -369,16 +505,32 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
                 </div>
                 <div className="field">
                   <label>{t('severity')}</label>
-                  <Segmented<Severity>
+                  <Segmented<SeverityChoice>
                     ariaLabel={t('severity')}
                     value={severity}
                     onChange={setSeverity}
                     options={[
+                      { value: 'auto', label: t('sevAuto') },
                       { value: 'low', label: t('sevLow') },
                       { value: 'medium', label: t('sevMedium') },
                       { value: 'high', label: t('sevHigh') },
                     ]}
                   />
+                  {severity === 'auto' && (
+                    <div className="stack mt" style={{ gap: 4 }}>
+                      <div className="row-wrap small">
+                        <Badge tone={SEV_TONE[preview.sev.level]}>{t('sevPreview', { level: t(`lvl_${preview.sev.level}` as Key), points: preview.sev.points })}</Badge>
+                        {preview.facts.minutesToNextTrain !== null && <SimLabel kind="wttPositions" short />}
+                      </div>
+                      <ul className="tiny muted" style={{ margin: 0, paddingLeft: 18 }}>
+                        {parseReasons([...preview.sev.reasons, ...(preview.facts.nextTrainNo ? [`Next train: ${preview.facts.nextTrainNo} (timetable)`] : [])]).map((f, i) => (
+                          <li key={i}>{factorText(f)}</li>
+                        ))}
+                      </ul>
+                      <div className="tiny muted">{t('sevAutoHint')} {t('sevThresholds', { high: SEVERITY_THRESHOLDS.high, medium: SEVERITY_THRESHOLDS.medium, mediumTop: SEVERITY_THRESHOLDS.high - 1 })}</div>
+                      {(!snapshot || loc.km === undefined) && <div className="tiny muted">{t('sevNeedsPlan')}</div>}
+                    </div>
+                  )}
                 </div>
                 <div className="field">
                   <label htmlFor="fr-note">{t('note')}</label>
@@ -400,12 +552,35 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
         </form>
       ) : (
         <div className="stack-lg">
+          {sent && (
+            <Card pastel={sent.severity === 'high' ? 'pink' : sent.severity === 'medium' ? 'yellow' : 'green'} tour="field-report-sent">
+              <CardHead title={t('sentTitle', { ref: sent.id })} sub={t('sentRouted', { dept: sent.dept ? deptText(sent.dept) : t('routesControl') })} right={sent.severity && <Badge tone={SEV_TONE[sent.severity]}>{t(`lvl_${sent.severity}` as Key)}</Badge>} />
+              <CardBody>
+                <div className="stack" style={{ gap: 6 }}>
+                  {sent.severity && <div className="strong small">{sent.severityAuto ? t('sentSeverity', { level: t(`lvl_${sent.severity}` as Key) }) : t('sentChosen', { level: t(`lvl_${sent.severity}` as Key) })}</div>}
+                  {sent.severityAuto && (
+                    <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+                      {parseReasons(sent.severityReasons).map((f, i) => (
+                        <li key={i}>{factorText(f)}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {sent.severityAuto && <div className="tiny muted">{t('sentNote')}</div>}
+                  <div>
+                    <button type="button" className="btn btn-sm" onClick={() => nav(`/app/field/reports/${encodeURIComponent(sent.id)}`)}>
+                      {t('sentOpen')}
+                    </button>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          )}
           {mine.length === 0 ? (
             <EmptyState title={t('mineEmpty')} />
           ) : (
             <div className="stack">
               {mine.map((r) => (
-                <ReportRow key={r.id} r={r} label={t(`st${r.status}` as Key)} onOpen={() => nav(`/app/field/reports/${encodeURIComponent(r.id)}`)} />
+                <ReportRow key={r.id} r={r} label={t(`st${r.status}` as Key)} sevLabel={r.severity ? `${t(`lvl_${r.severity}` as Key)}${r.severityAuto ? ` · ${t('sevComputedBadge')}` : ''}` : null} onOpen={() => nav(`/app/field/reports/${encodeURIComponent(r.id)}`)} />
               ))}
             </div>
           )}
@@ -450,7 +625,7 @@ export default function FieldReportPage({ tab = 'new' }: FieldReportPageProps) {
   );
 }
 
-function ReportRow({ r, label, onOpen }: { r: HazardReport; label: string; onOpen: () => void }) {
+function ReportRow({ r, label, sevLabel, onOpen }: { r: HazardReport; label: string; sevLabel: string | null; onOpen: () => void }) {
   return (
     <button type="button" className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, textAlign: 'left', width: '100%', minHeight: 64 }} onClick={onOpen}>
       {r.thumbDataUrl && <img src={r.thumbDataUrl} alt="" width={52} height={52} style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)', flex: 'none' }} />}
@@ -458,6 +633,7 @@ function ReportRow({ r, label, onOpen }: { r: HazardReport; label: string; onOpe
         <span className="row-wrap" style={{ gap: 6 }}>
           <span className="mono strong">{r.id}</span>
           <Badge tone={STATUS_TONE[r.status]}>{label}</Badge>
+          {r.severity && sevLabel && <Badge tone={SEV_TONE[r.severity]}>{sevLabel}</Badge>}
           {r.dept && <DeptBadge dept={r.dept} />}
         </span>
         <span className="small truncate" style={{ display: 'block' }}>{r.description}</span>

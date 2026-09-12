@@ -23,6 +23,7 @@ import { SeedStamp, SimLabel, SourceLabel, type SimKind } from '../../components
 import { TOUR_STEPS } from '../../features/tour/steps';
 import { startTour } from '../../features/tour/tour';
 import { TaskDrawer } from '../../components/domain/TaskDrawer';
+import { SolverDetails } from '../../components/domain/SolverStamp';
 import { useDrawerParams } from '../../components/domain/useDrawerParams';
 
 /** Seed the worker uses for every feed (src/engine/worker.ts default). */
@@ -72,7 +73,8 @@ const strings = {
     colWeight: 'Weight',
     colWhy: 'Explanation',
     optTitle: 'Optimiser',
-    optSub: 'Greedy construction placed in the free timetable windows, then simulated annealing moves and bundles works. Rules and weights below are the ones in force for this run.',
+    optSub: 'An exact MILP over the candidate possessions in the free timetable windows (JPO rules, machine and gang capacity, requisition sequences and approved blocks as hard constraints; one weighted objective) is solved in the browser by HiGHS (WebAssembly); simulated annealing then moves and bundles works. If HiGHS cannot load, greedy construction + annealing runs instead. OR-Tools CP-SAT is the production target. Formulation: docs/MILP-FORMULATION.md. Rules, weights and search figures below are the ones of this run.',
+    solverRunTitle: 'Solver of this run',
     rulesTitle: 'Rules in force',
     rMax: 'Longest possession',
     rMin: 'Shortest possession',
@@ -92,10 +94,11 @@ const strings = {
     wColocation: 'Co-location bonus',
     wTsr: 'TSR train-minutes',
     wSpread: 'Per-block penalty',
+    wPreference: 'Requisition preference (per day away)',
     searchTitle: 'Search on this run',
     sIterations: 'Iterations',
     sImprovements: 'Improvements accepted',
-    sCost: 'Cost: greedy → final',
+    sCost: 'Cost: construction → after annealing',
     sTime: 'Solver time',
     kpiTitle: 'This week: plan against the simulated baseline',
     colMetric: 'Metric',
@@ -183,7 +186,7 @@ const strings = {
     limitsTitle: 'Limitations',
     l1: 'Runs entirely in the browser: no server and no sync between devices.',
     l2: 'Feeds are seeded; there is no live link to CRIS, COA, FOIS, BDMS or SCADA.',
-    l3: 'The optimiser is greedy construction plus simulated annealing; the CP-SAT formulation is documented but not executed.',
+    l3: 'The exact solver is a MILP solved by HiGHS in the browser within a few seconds, with simulated annealing as polish and fallback; OR-Tools CP-SAT on a server is the production target and is not run here. The MILP keeps at most 20 candidate windows per work, so its optimality gap is for that candidate set.',
     l4: 'Accounts are browser-local demo accounts.',
     l5: 'No PNR, seat, berth or live running status anywhere in the product.',
     l6: 'The copilot is rule-based and answers in English.',
@@ -265,7 +268,8 @@ const strings = {
     colWeight: 'भार',
     colWhy: 'व्याख्या',
     optTitle: 'ऑप्टिमाइज़र',
-    optSub: 'पहले ग्रीडी निर्माण मुक्त समय-सारणी खिड़कियों में कार्य रखता है, फिर सिम्युलेटेड एनीलिंग कार्यों को खिसकाती और बंडल करती है। नीचे इस रन के लागू नियम और भार हैं।',
+    optSub: 'मुक्त समय-सारणी खिड़कियों में संभावित पज़ेशन पर एक सटीक MILP (JPO नियम, मशीन व गैंग क्षमता, माँग-पत्र क्रम और स्वीकृत block कठोर बाधाओं के रूप में; एक भारित उद्देश्य) ब्राउज़र में HiGHS (WebAssembly) से हल होता है; फिर सिम्युलेटेड एनीलिंग कार्यों को खिसकाती और बंडल करती है। HiGHS लोड न हो तो ग्रीडी निर्माण + एनीलिंग चलता है। उत्पादन लक्ष्य OR-Tools CP-SAT है। सूत्रीकरण: docs/MILP-FORMULATION.md। नीचे इस रन के नियम, भार और खोज आँकड़े हैं।',
+    solverRunTitle: 'इस रन का सॉल्वर',
     rulesTitle: 'लागू नियम',
     rMax: 'सबसे लंबा पज़ेशन',
     rMin: 'सबसे छोटा पज़ेशन',
@@ -285,10 +289,11 @@ const strings = {
     wColocation: 'सह-स्थान बोनस',
     wTsr: 'TSR ट्रेन-मिनट',
     wSpread: 'प्रति-ब्लॉक दंड',
+    wPreference: 'माँग-पत्र प्राथमिकता (प्रति दिन दूरी)',
     searchTitle: 'इस रन की खोज',
     sIterations: 'पुनरावृत्तियाँ',
     sImprovements: 'स्वीकृत सुधार',
-    sCost: 'लागत: ग्रीडी → अंतिम',
+    sCost: 'लागत: निर्माण → एनीलिंग के बाद',
     sTime: 'सॉल्वर समय',
     kpiTitle: 'यह सप्ताह: योजना बनाम सिम्युलेटेड आधार-रेखा',
     colMetric: 'मापदंड',
@@ -376,7 +381,7 @@ const strings = {
     limitsTitle: 'सीमाएँ',
     l1: 'पूरी तरह ब्राउज़र में चलता है: कोई सर्वर नहीं, उपकरणों के बीच सिंक नहीं।',
     l2: 'फ़ीड सीडेड हैं; CRIS, COA, FOIS, BDMS या SCADA से कोई लाइव लिंक नहीं।',
-    l3: 'ऑप्टिमाइज़र ग्रीडी निर्माण और सिम्युलेटेड एनीलिंग है; CP-SAT सूत्रीकरण प्रलेखित है पर चलाया नहीं जाता।',
+    l3: 'सटीक सॉल्वर एक MILP है जिसे HiGHS ब्राउज़र में कुछ सेकंड में हल करता है, सिम्युलेटेड एनीलिंग सुधार और विकल्प के रूप में; सर्वर पर OR-Tools CP-SAT उत्पादन लक्ष्य है और यहाँ नहीं चलता। MILP हर कार्य की अधिकतम 20 संभावित खिड़कियाँ रखता है, इसलिए उसका इष्टतमता अंतर उसी समूह के लिए है।',
     l4: 'खाते ब्राउज़र-स्थानीय डेमो खाते हैं।',
     l5: 'उत्पाद में कहीं भी PNR, सीट, बर्थ या लाइव रनिंग स्थिति नहीं।',
     l6: 'कोपायलट नियम-आधारित है और अंग्रेज़ी में उत्तर देता है।',
@@ -782,6 +787,7 @@ export default function MethodPage() {
                         [t('wColocation'), num(weights.colocation, 0)],
                         [t('wTsr'), num(weights.tsr, 2)],
                         [t('wSpread'), num(weights.spread, 0)],
+                        ...(typeof weights.preference === 'number' ? ([[t('wPreference'), num(weights.preference, 0)]] as [string, string][]) : []),
                       ]}
                     />
                   </div>
@@ -796,6 +802,10 @@ export default function MethodPage() {
                       ]}
                     />
                   </div>
+                </div>
+                <div data-tour="method-solver">
+                  <div className="section-title">{t('solverRunTitle')}</div>
+                  <SolverDetails plan={w.ai} />
                 </div>
                 <div>
                   <div className="row-between mb">

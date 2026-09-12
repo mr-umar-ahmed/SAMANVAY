@@ -7,7 +7,7 @@
  * accepted requisitions are traced into the working plan (scheduled →
  * granted → executed) from the snapshot, the workflow and the execution log.
  */
-import { useCallback, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { Check, Copy, Download, Pencil, Plus, RotateCcw, Send, X } from 'lucide-react';
 import { usePortalDept } from '../../app/usePortal';
@@ -15,7 +15,7 @@ import { can } from '../../auth/portals';
 import { MACHINE_TYPES, WORK_TYPES } from '../../engine/constants.js';
 import { sectionsInRange } from '../../engine/corridors.js';
 import { validateDemand } from '../../engine/intake.js';
-import { placement, workingBlocks, type Placement } from '../../engine/select';
+import { placement, preferredDayOf, requisitionInjectSpec, requisitionSourceId, workingBlocks, type Placement } from '../../engine/select';
 import type { BlockSection, Dept, Line, Snapshot, Task } from '../../engine/types';
 import { useT } from '../../i18n';
 import { DEPT_LABEL, addDaysIso, dateLabel, dateLong, download, duration, hhmm, kmRange, lineLabel, timeAgo } from '../../lib/format';
@@ -210,6 +210,52 @@ const strings = {
     h_RETURNED: 'Returned with remarks',
     h_ACCEPTED: 'Accepted into the plan',
     h_WITHDRAWN: 'Withdrawn',
+    fNeedsPower: 'Needs power block (OHE isolated)',
+    fNeedsDisc: 'Needs S&T disconnection (T/351)',
+    fDependsOn: 'Must follow requisition(s)',
+    fDependsOnHint: 'This work starts only after these finish (a hard rule for the planner). Your department’s other requisitions on this corridor.',
+    fCoRequire: 'Must share a block with requisition(s)',
+    fCoRequireHint: 'Placed in the same possession as these (a hard rule). Any department on this corridor; they must be on the same block section and line.',
+    noOthers: 'No other requisition to pick.',
+    errBothDep: '{no} cannot be both a predecessor and a joint-block partner.',
+    errCycle: 'Circular sequence: {no} already has to follow this requisition.',
+    errCoSection: '{no} is on {sections}, {line}; a joint block needs the same block section and a common line.',
+    warnDepState: '{no} is {state}: the planner uses it only once it is accepted.',
+    warnDepDate: '{no} prefers {date}, after this requisition’s preferred date.',
+    warnRedundantPower: 'The block type already includes a power block.',
+    kvNeedsPower: 'Power block (OHE)',
+    kvNeedsDisc: 'S&T disconnection',
+    kvDependsOn: 'Must follow',
+    kvCoRequire: 'Shares a block with',
+    kvReplaces: 'Replaces register work',
+    yes: 'Yes',
+    no: 'No',
+    none: 'None',
+    plannerTitle: 'What the planner will do',
+    plannerSub: 'The inputs the optimiser receives when this requisition is accepted',
+    pDuration: 'Duration {dur} used as given (not recalibrated); possession about {total} with setup and clearance.',
+    pDurationCal: 'No duration given: the calibrated standard for the work type is used.',
+    pDay: 'Preferred day {date} (plan day {d}); each day away adds {w} to the plan cost.',
+    pDayOutside: 'Preferred date {date} is outside this plan week ({a} – {b}); the work is placed by risk.',
+    pDayNone: 'No preferred day: placed by risk and traffic.',
+    pWindowNight: 'Prefers the night window {a}–{b}; a start outside it costs three times the preference weight.',
+    pWindowDay: 'Prefers a day gap; a night start costs three times the preference weight.',
+    pWindowAny: 'Any window.',
+    pMachine: 'Machine: {m}.',
+    pNoMachine: 'No machine: manual work.',
+    pKind: 'Block kind: {kind}{extra}.',
+    pKindPower: ' with an OHE power block',
+    pKindDisc: ' with an S&T disconnection (T/351)',
+    pDepends: 'Sequence: starts only after {list} finish.',
+    pCo: 'Joint block: placed in the same possession as {list}.',
+    pReplaces: 'Replaces register work {id}{label}: that work leaves the run and this requisition is planned instead.',
+    pReplacesGone: 'Register work {id} is not in the current run, so nothing is replaced.',
+    pNew: 'New work: no register work is replaced.',
+    landedTitle: 'Where the work landed',
+    landedDeps: '{no}: {where}',
+    landedDepPlaced: 'placed {date} {window}',
+    landedDepNot: 'not placed this week',
+    landedDepMissing: 'not in this run yet',
   },
   hi: {
     title: 'Block माँग-पत्र',
@@ -366,6 +412,52 @@ const strings = {
     h_RETURNED: 'टिप्पणी सहित लौटाया',
     h_ACCEPTED: 'योजना में स्वीकृत',
     h_WITHDRAWN: 'वापस लिया',
+    fNeedsPower: 'पावर block चाहिए (OHE आइसोलेट)',
+    fNeedsDisc: 'S&T डिस्कनेक्शन चाहिए (T/351)',
+    fDependsOn: 'इन माँग-पत्रों के बाद ही',
+    fDependsOnHint: 'यह कार्य इनके पूरा होने के बाद ही शुरू होगा (प्लानर का कठोर नियम)। इस कॉरिडोर पर आपके विभाग के अन्य माँग-पत्र।',
+    fCoRequire: 'इन माँग-पत्रों के साथ एक ही block में',
+    fCoRequireHint: 'इनके साथ एक ही पज़ेशन में रखा जाएगा (कठोर नियम)। इस कॉरिडोर का कोई भी विभाग; block सेक्शन और लाइन समान होनी चाहिए।',
+    noOthers: 'चुनने के लिए कोई अन्य माँग-पत्र नहीं।',
+    errBothDep: '{no} पूर्ववर्ती और संयुक्त-block साझेदार दोनों नहीं हो सकता।',
+    errCycle: 'चक्रीय क्रम: {no} को पहले से इस माँग-पत्र के बाद होना है।',
+    errCoSection: '{no} {sections}, {line} पर है; संयुक्त block के लिए समान block सेक्शन और साझा लाइन चाहिए।',
+    warnDepState: '{no} {state} है: प्लानर इसे स्वीकृत होने पर ही उपयोग करता है।',
+    warnDepDate: '{no} की पसंदीदा तिथि {date} है, जो इस माँग-पत्र की पसंदीदा तिथि के बाद है।',
+    warnRedundantPower: 'Block प्रकार में पावर block पहले से शामिल है।',
+    kvNeedsPower: 'पावर block (OHE)',
+    kvNeedsDisc: 'S&T डिस्कनेक्शन',
+    kvDependsOn: 'इनके बाद',
+    kvCoRequire: 'इनके साथ block में',
+    kvReplaces: 'रजिस्टर कार्य की जगह',
+    yes: 'हाँ',
+    no: 'नहीं',
+    none: 'कोई नहीं',
+    plannerTitle: 'प्लानर क्या करेगा',
+    plannerSub: 'स्वीकार होने पर ऑप्टिमाइज़र को मिलने वाले इनपुट',
+    pDuration: 'अवधि {dur} जैसी दी गई वैसी (पुनः कैलिब्रेट नहीं); सेटअप और क्लीयरेंस सहित पज़ेशन लगभग {total}।',
+    pDurationCal: 'अवधि नहीं दी: कार्य प्रकार का कैलिब्रेटेड मानक उपयोग होगा।',
+    pDay: 'पसंदीदा दिन {date} (योजना दिन {d}); हर दिन की दूरी योजना लागत में {w} जोड़ती है।',
+    pDayOutside: 'पसंदीदा तिथि {date} इस योजना सप्ताह ({a} – {b}) से बाहर है; कार्य जोखिम के अनुसार रखा जाएगा।',
+    pDayNone: 'कोई पसंदीदा दिन नहीं: जोखिम और यातायात के अनुसार।',
+    pWindowNight: 'रात की विंडो {a}–{b} पसंद; इसके बाहर शुरुआत पर वरीयता भार का तीन गुना।',
+    pWindowDay: 'दिन का अंतराल पसंद; रात में शुरुआत पर वरीयता भार का तीन गुना।',
+    pWindowAny: 'कोई भी विंडो।',
+    pMachine: 'मशीन: {m}।',
+    pNoMachine: 'मशीन नहीं: हाथ से कार्य।',
+    pKind: 'Block प्रकार: {kind}{extra}।',
+    pKindPower: ' OHE पावर block सहित',
+    pKindDisc: ' S&T डिस्कनेक्शन (T/351) सहित',
+    pDepends: 'क्रम: {list} पूरे होने के बाद ही शुरू।',
+    pCo: 'संयुक्त block: {list} के साथ एक ही पज़ेशन में।',
+    pReplaces: 'रजिस्टर कार्य {id}{label} की जगह: वह कार्य रन से हटेगा और यह माँग-पत्र नियोजित होगा।',
+    pReplacesGone: 'रजिस्टर कार्य {id} वर्तमान रन में नहीं है, इसलिए कुछ नहीं बदलेगा।',
+    pNew: 'नया कार्य: कोई रजिस्टर कार्य नहीं बदलता।',
+    landedTitle: 'कार्य कहाँ नियोजित हुआ',
+    landedDeps: '{no}: {where}',
+    landedDepPlaced: '{date} {window} को नियोजित',
+    landedDepNot: 'इस सप्ताह नियोजित नहीं',
+    landedDepMissing: 'अभी इस रन में नहीं',
   },
 } as const;
 
@@ -389,6 +481,11 @@ interface ReqFields {
   blockType: BlockType;
   preferredDate?: string;
   speedAfterKmph?: number | null;
+  id?: string;
+  needsPowerBlock?: boolean;
+  needsDisconnection?: boolean;
+  dependsOnReqIds?: string[];
+  coRequireReqIds?: string[];
 }
 interface CheckResult {
   errors: string[];
@@ -398,7 +495,7 @@ interface CheckResult {
   ohe: string;
 }
 
-function checkRequisition(f: ReqFields, snapshot: Snapshot, t: TFn): CheckResult {
+function checkRequisition(f: ReqFields, snapshot: Snapshot, t: TFn, all: Requisition[] = []): CheckResult {
   const corridor = snapshot.corridor;
   const rules = snapshot.result.rules;
   const errors: string[] = [];
@@ -425,10 +522,49 @@ function checkRequisition(f: ReqFields, snapshot: Snapshot, t: TFn): CheckResult
   const weekEnd = addDaysIso(snapshot.planStart, snapshot.result.weekly.occupancy.length - 1);
   if (f.preferredDate && (f.preferredDate < snapshot.planStart || f.preferredDate > weekEnd)) warnings.push(t('warnDate', { a: dateLabel(snapshot.planStart), b: dateLabel(weekEnd) }));
   if (f.speedAfterKmph && f.speedAfterKmph >= corridor.mpsKmph) warnings.push(t('warnSpeed', { mps: corridor.mpsKmph }));
+  if (f.needsPowerBlock && (f.blockType === 'POWER' || f.blockType === 'INTEGRATED')) warnings.push(t('warnRedundantPower'));
+  // sequence and joint-block links to other requisitions
+  const byId = new Map(all.map((x) => [x.id, x]));
+  const deps = (f.dependsOnReqIds ?? []).filter((id) => byId.has(id));
+  const cos = (f.coRequireReqIds ?? []).filter((id) => byId.has(id));
+  const noOf = (id: string) => byId.get(id)?.no ?? id;
+  for (const id of deps) if (cos.includes(id)) errors.push(t('errBothDep', { no: noOf(id) }));
+  if (f.id) {
+    for (const d of deps) {
+      const seen = new Set<string>();
+      const stack = [d];
+      let loop = false;
+      while (stack.length && !loop) {
+        const x = stack.pop()!;
+        if (seen.has(x)) continue;
+        seen.add(x);
+        for (const y of byId.get(x)?.dependsOnReqIds ?? []) {
+          if (y === f.id) loop = true;
+          else stack.push(y);
+        }
+      }
+      if (loop) errors.push(t('errCycle', { no: noOf(d) }));
+    }
+  }
+  const mySecs = new Set(sections.map((s) => s.index));
+  for (const id of cos) {
+    const o = byId.get(id)!;
+    const oSecs = sectionsInRange(corridor, o.startKm, o.endKm) as BlockSection[];
+    const lineOk = o.line === f.line || o.line === 'BOTH' || f.line === 'BOTH';
+    if (mySecs.size && (!lineOk || !oSecs.some((s) => mySecs.has(s.index)))) errors.push(t('errCoSection', { no: o.no, sections: oSecs.map((s) => s.label).join(' / ') || kmRange(o.startKm, o.endKm), line: lineLabel(o.line) }));
+  }
+  for (const id of [...deps, ...cos]) {
+    const o = byId.get(id)!;
+    if (o.status !== 'ACCEPTED' && o.status !== 'SUBMITTED') warnings.push(t('warnDepState', { no: o.no, state: t(`st_${o.status}` as Key) }));
+  }
+  for (const id of deps) {
+    const o = byId.get(id)!;
+    if (o.preferredDate && f.preferredDate && o.preferredDate > f.preferredDate) warnings.push(t('warnDepDate', { no: o.no, date: dateLabel(o.preferredDate) }));
+  }
   return { errors, warnings, sections, totalMin, ohe };
 }
 
-const fieldsOf = (r: Requisition): ReqFields => ({ dept: r.dept, workType: r.workType, line: r.line, startKm: r.startKm, endKm: r.endKm, durationMin: r.durationMin, blockType: r.blockType, preferredDate: r.preferredDate, speedAfterKmph: r.speedAfterKmph });
+const fieldsOf = (r: Requisition): ReqFields => ({ id: r.id, dept: r.dept, workType: r.workType, line: r.line, startKm: r.startKm, endKm: r.endKm, durationMin: r.durationMin, blockType: r.blockType, preferredDate: r.preferredDate, speedAfterKmph: r.speedAfterKmph, needsPowerBlock: r.needsPowerBlock, needsDisconnection: r.needsDisconnection, dependsOnReqIds: r.dependsOnReqIds, coRequireReqIds: r.coRequireReqIds });
 
 interface Trace {
   state: ReqState;
@@ -474,7 +610,8 @@ function Requisitions({ snapshot, mode, dept }: { snapshot: Snapshot; mode: Mode
   /* ── derived: scope, checks, trace into the plan ─────────── */
   const blocks = useMemo(() => workingBlocks(snapshot, approvals), [snapshot, approvals]);
   const scoped = useMemo(() => requisitions.filter((r) => r.corridorId === corridor.id && (mode !== 'dept' || r.dept === dept)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [requisitions, corridor.id, mode, dept]);
-  const checks = useMemo(() => new Map(scoped.map((r) => [r.id, checkRequisition(fieldsOf(r), snapshot, t)])), [scoped, snapshot, t]);
+  const corridorReqs = useMemo(() => requisitions.filter((r) => r.corridorId === corridor.id), [requisitions, corridor.id]);
+  const checks = useMemo(() => new Map(scoped.map((r) => [r.id, checkRequisition(fieldsOf(r), snapshot, t, corridorReqs)])), [scoped, snapshot, t, corridorReqs]);
   const traces = useMemo(() => {
     const bySource = new Map(snapshot.tasks.map((x) => [x.sourceId, x]));
     const m = new Map<string, Trace>();
@@ -483,7 +620,8 @@ function Requisitions({ snapshot, mode, dept }: { snapshot: Snapshot; mode: Mode
         m.set(r.id, { state: r.status, task: null, placement: null });
         continue;
       }
-      const task = bySource.get(`BDMS/${r.no}`) ?? null;
+      // the injected work carries the requisition's source id (select.requisitionSourceId → "REQ/<id>")
+      const task = bySource.get(requisitionSourceId(r.id)) ?? bySource.get(`BDMS/${r.no}`) ?? null;
       const pl = task ? placement(snapshot, blocks, task.id) : null;
       const b = pl?.block ?? null;
       const ex = b ? executionLog.find((e) => e.blockId === b.id && e.corridorId === corridor.id) : undefined;
@@ -546,7 +684,8 @@ function Requisitions({ snapshot, mode, dept }: { snapshot: Snapshot; mode: Mode
   );
   const handleDuplicate = useCallback(
     (r: Requisition) => {
-      const copy = saveRequisition({ corridorId: r.corridorId, dept: r.dept, workType: r.workType, line: r.line, startKm: r.startKm, endKm: r.endKm, durationMin: r.durationMin, preferredDate: r.preferredDate, preferredWindow: r.preferredWindow, machine: r.machine, crew: r.crew, blockType: r.blockType, speedAfterKmph: r.speedAfterKmph, speedAfterDays: r.speedAfterDays, gang: r.gang, incharge: r.incharge, assetIds: r.assetIds, remarks: r.remarks, status: 'DRAFT', validation: r.validation });
+      // the copy keeps the requirements and links but not the replaced register work (one requisition replaces it)
+      const copy = saveRequisition({ corridorId: r.corridorId, dept: r.dept, workType: r.workType, line: r.line, startKm: r.startKm, endKm: r.endKm, durationMin: r.durationMin, preferredDate: r.preferredDate, preferredWindow: r.preferredWindow, machine: r.machine, crew: r.crew, blockType: r.blockType, speedAfterKmph: r.speedAfterKmph, speedAfterDays: r.speedAfterDays, gang: r.gang, incharge: r.incharge, assetIds: r.assetIds, remarks: r.remarks, needsPowerBlock: r.needsPowerBlock, needsDisconnection: r.needsDisconnection, dependsOnReqIds: r.dependsOnReqIds, coRequireReqIds: r.coRequireReqIds, status: 'DRAFT', validation: r.validation });
       toast({ title: t('toastDuplicated', { no: copy.no, from: r.no }), tone: 'ok' });
       openReq(copy.id);
     },
@@ -657,6 +796,7 @@ function Requisitions({ snapshot, mode, dept }: { snapshot: Snapshot; mode: Mode
           <RequisitionForm
             key={compose?.editId ?? 'new'}
             snapshot={snapshot}
+            allReqs={corridorReqs}
             mode={mode}
             fixedDept={dept}
             initial={editing}
@@ -668,7 +808,9 @@ function Requisitions({ snapshot, mode, dept }: { snapshot: Snapshot; mode: Mode
           <RequisitionDetail
             req={selected}
             state={stateOf(selected)}
-            check={checks.get(selected.id) ?? checkRequisition(fieldsOf(selected), snapshot, t)}
+            check={checks.get(selected.id) ?? checkRequisition(fieldsOf(selected), snapshot, t, corridorReqs)}
+            allReqs={corridorReqs}
+            onOpenReq={openReq}
             trace={traces.get(selected.id) ?? null}
             snapshot={snapshot}
             mode={mode}
@@ -697,8 +839,8 @@ function Requisitions({ snapshot, mode, dept }: { snapshot: Snapshot; mode: Mode
           req={returning}
           onClose={() => setReturning(null)}
           onConfirm={(remarks) => {
-            returnRequisition(returning.id, remarks);
-            toast({ title: t('toastReturned', { no: returning.no }), body: remarks, tone: 'warn' });
+            // the store refuses (and toasts why) unless the requisition is still SUBMITTED
+            if (returnRequisition(returning.id, remarks)) toast({ title: t('toastReturned', { no: returning.no }), body: remarks, tone: 'warn' });
             setReturning(null);
           }}
         />
@@ -728,9 +870,29 @@ function RequisitionDetail(props: {
   onReturn: () => void;
   openTask: (id: string) => void;
   openBlock: (id: string) => void;
+  allReqs: Requisition[];
+  onOpenReq: (id: string) => void;
 }) {
-  const { req: r, state, check, trace, snapshot, mode, canIntake, canPlan } = props;
+  const { req: r, state, check, trace, snapshot, mode, canIntake, canPlan, allReqs } = props;
   const t = useT(strings);
+  const weights = useAppStore((s) => s.weights);
+  const reqById = new Map(allReqs.map((x) => [x.id, x]));
+  const reqLinks = (ids: string[] | undefined) => (ids ?? []).map((id) => reqById.get(id)).filter((x): x is Requisition => !!x);
+  const depReqs = reqLinks(r.dependsOnReqIds);
+  const coReqs = reqLinks(r.coRequireReqIds);
+  const linkList = (list: Requisition[]) =>
+    list.length ? (
+      <span className="row-wrap" style={{ gap: 4 }}>
+        {list.map((x) => (
+          <button key={x.id} type="button" className="btn btn-sm btn-ghost mono" style={{ padding: '0 6px' }} onClick={() => props.onOpenReq(x.id)}>
+            {x.no} · {t(`st_${x.status}` as Key)}
+          </button>
+        ))}
+      </span>
+    ) : (
+      t('none')
+    );
+  const linkText = (list: Requisition[]) => (list.length ? list.map((x) => x.no).join(', ') : t('none'));
   const corridor = snapshot.corridor;
   const rules = snapshot.result.rules;
   const machineLabel = (id: string) => snapshot.feeds.machines.find((m) => m.id === id)?.label ?? id;
@@ -775,6 +937,20 @@ function RequisitionDetail(props: {
               [t('kvPreferred'), `${r.preferredDate ? dateLong(r.preferredDate) : t('flexible')}${windowText ? ` · ${windowText}` : ''}`],
               [t('kvMachine'), r.machine ? MT[r.machine]?.label ?? r.machine : t('noMachine')],
               [t('kvSpeed'), r.speedAfterKmph ? (r.speedAfterDays ? t('kvSpeedVal', { v: r.speedAfterKmph, d: r.speedAfterDays }) : t('kvSpeedValNoDays', { v: r.speedAfterKmph })) : t('kvFull')],
+              [t('kvNeedsPower'), r.needsPowerBlock ? t('yes') : t('no')],
+              [t('kvNeedsDisc'), r.needsDisconnection ? t('yes') : t('no')],
+              [t('kvDependsOn'), linkList(depReqs)],
+              [t('kvCoRequire'), linkList(coReqs)],
+              ...(r.sourceTaskId
+                ? [
+                    [
+                      t('kvReplaces'),
+                      <button key="rep" type="button" className="btn btn-sm btn-ghost mono" style={{ padding: '0 6px' }} onClick={() => props.openTask(r.sourceTaskId!)}>
+                        {r.sourceTaskId}
+                      </button>,
+                    ] as [string, ReactNode],
+                  ]
+                : []),
               ...(r.gang ? [[t('kvGang'), r.gang] as [string, string]] : []),
               ...(r.incharge ? [[t('kvIncharge'), r.incharge] as [string, string]] : []),
               ...(r.assetIds ? [[t('kvAssets'), r.assetIds] as [string, string]] : []),
@@ -813,6 +989,24 @@ function RequisitionDetail(props: {
               <div className="tiny muted mt">{t('mapping', { sections: check.sections.map((s) => s.label).join(' / '), total: duration(check.totalMin), ohe: check.ohe ? t('mappingOhe', { ohe: check.ohe }) : '' })}</div>
             )}
           </div>
+
+          <PlannerPlan req={r} snapshot={snapshot} reqById={reqById} weights={weights} />
+
+          {r.status === 'ACCEPTED' && trace?.task?.injectedFields?.note && (
+            <Callout tone="info">
+              <b>{t('landedTitle')}:</b> {trace.task.injectedFields.note}
+              {(trace.task.dependsOn ?? []).length > 0 && (
+                <ul className="small" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                  {(trace.task.dependsOn ?? []).map((pid) => {
+                    const pt = snapshot.tasks.find((x) => x.id === pid);
+                    const ps = snapshot.result.weekly.ai.scheduled.find((x) => x.taskId === pid);
+                    const where = !pt ? t('landedDepMissing') : ps ? t('landedDepPlaced', { date: dateLabel(addDaysIso(snapshot.planStart, ps.day)), window: `${hhmm(ps.start)}–${hhmm(ps.end)}` }) : t('landedDepNot');
+                    return <li key={pid}>{t('landedDeps', { no: pt?.label ?? pid, where })}</li>;
+                  })}
+                </ul>
+              )}
+            </Callout>
+          )}
 
           {r.status === 'ACCEPTED' && (
             <div>
@@ -914,6 +1108,11 @@ function RequisitionDetail(props: {
                 <tr><th style={sheetCell}>{t('kvPreferred')}</th><td style={sheetCell}>{r.preferredDate ? dateLong(r.preferredDate) : t('flexible')}{windowText ? ` · ${windowText}` : ''}</td></tr>
                 <tr><th style={sheetCell}>{t('kvMachine')}</th><td style={sheetCell}>{r.machine ? MT[r.machine]?.label ?? r.machine : t('noMachine')}</td></tr>
                 <tr><th style={sheetCell}>{t('kvSpeed')}</th><td style={sheetCell}>{r.speedAfterKmph ? t('kvSpeedValNoDays', { v: r.speedAfterKmph }) : t('kvFull')}</td></tr>
+                <tr><th style={sheetCell}>{t('kvNeedsPower')}</th><td style={sheetCell}>{r.needsPowerBlock ? t('yes') : t('no')}</td></tr>
+                <tr><th style={sheetCell}>{t('kvNeedsDisc')}</th><td style={sheetCell}>{r.needsDisconnection ? t('yes') : t('no')}</td></tr>
+                <tr><th style={sheetCell}>{t('kvDependsOn')}</th><td style={sheetCell}>{linkText(depReqs)}</td></tr>
+                <tr><th style={sheetCell}>{t('kvCoRequire')}</th><td style={sheetCell}>{linkText(coReqs)}</td></tr>
+                {r.sourceTaskId && <tr><th style={sheetCell}>{t('kvReplaces')}</th><td style={sheetCell}>{r.sourceTaskId}</td></tr>}
                 <tr><th style={sheetCell}>{t('kvGang')}</th><td style={sheetCell}>{r.gang ?? '—'}</td></tr>
                 <tr><th style={sheetCell}>{t('kvIncharge')}</th><td style={sheetCell}>{r.incharge ?? '—'}</td></tr>
                 <tr><th style={sheetCell}>{t('remarks')}</th><td style={sheetCell}>{r.remarks ?? '—'}</td></tr>
@@ -932,7 +1131,7 @@ function RequisitionDetail(props: {
 }
 
 /* ── Form (raise / edit / create on behalf) ────────────────── */
-function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel, onDone }: { snapshot: Snapshot; mode: Mode; fixedDept: Dept | null; initial: Requisition | null; canSave: boolean; onCancel?: () => void; onDone: (r: Requisition) => void }) {
+function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel, onDone, allReqs }: { snapshot: Snapshot; mode: Mode; fixedDept: Dept | null; initial: Requisition | null; canSave: boolean; onCancel?: () => void; onDone: (r: Requisition) => void; allReqs: Requisition[] }) {
   const t = useT(strings);
   const user = useAppStore((s) => s.user);
   const saveRequisition = useAppStore((s) => s.saveRequisition);
@@ -959,6 +1158,14 @@ function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel
   const [incharge, setIncharge] = useState(initial?.incharge ?? user?.name ?? '');
   const [assets, setAssets] = useState(initial?.assetIds ?? '');
   const [remarks, setRemarks] = useState(initial?.remarks ?? '');
+  const [needsPower, setNeedsPower] = useState(!!initial?.needsPowerBlock);
+  const [needsDisc, setNeedsDisc] = useState(!!initial?.needsDisconnection);
+  const [dependsOn, setDependsOn] = useState<string[]>(initial?.dependsOnReqIds ?? []);
+  const [coRequire, setCoRequire] = useState<string[]>(initial?.coRequireReqIds ?? []);
+  const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  const others = allReqs.filter((x) => x.id !== initial?.id && x.status !== 'WITHDRAWN');
+  const depCandidates = others.filter((x) => x.dept === dept);
+  const coCandidates = others;
 
   const changeWork = (wt: string) => {
     setWorkType(wt);
@@ -971,8 +1178,10 @@ function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel
     changeWork(firstWork(d));
   };
 
-  const fields: ReqFields = { dept, workType, line, startKm: from.trim() === '' ? NaN : Number(from), endKm: to.trim() === '' ? NaN : Number(to), durationMin: Number(dur), blockType, preferredDate: date || undefined, speedAfterKmph: speed.trim() ? Number(speed) : null };
-  const check = checkRequisition(fields, snapshot, t);
+  const depIds = dependsOn.filter((id) => depCandidates.some((x) => x.id === id));
+  const coIds = coRequire.filter((id) => coCandidates.some((x) => x.id === id));
+  const fields: ReqFields = { id: initial?.id, dept, workType, line, startKm: from.trim() === '' ? NaN : Number(from), endKm: to.trim() === '' ? NaN : Number(to), durationMin: Number(dur), blockType, preferredDate: date || undefined, speedAfterKmph: speed.trim() ? Number(speed) : null, needsPowerBlock: needsPower, needsDisconnection: needsDisc, dependsOnReqIds: depIds, coRequireReqIds: coIds };
+  const check = checkRequisition(fields, snapshot, t, allReqs);
   const touched = from !== '' || to !== '';
   const draftOk = canSave && !!WT[workType] && Number.isFinite(fields.startKm) && Number.isFinite(fields.endKm);
 
@@ -997,6 +1206,11 @@ function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel
       incharge: incharge.trim() || undefined,
       assetIds: assets.trim() || undefined,
       remarks: remarks.trim() || undefined,
+      needsPowerBlock: needsPower,
+      needsDisconnection: needsDisc,
+      dependsOnReqIds: depIds.length ? depIds : undefined,
+      coRequireReqIds: coIds.length ? coIds : undefined,
+      sourceTaskId: initial?.sourceTaskId,
       status: initial?.status === 'RETURNED' ? 'RETURNED' : 'DRAFT',
       validation: [...check.errors, ...check.warnings],
     });
@@ -1087,6 +1301,24 @@ function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel
               <input className="input" value={assets} onChange={(e) => setAssets(e.target.value)} />
             </Field>
           )}
+          <div className="row-wrap">
+            <label className="check small">
+              <input type="checkbox" checked={needsPower} onChange={(e) => setNeedsPower(e.target.checked)} />
+              {t('fNeedsPower')}
+            </label>
+            <label className="check small">
+              <input type="checkbox" checked={needsDisc} onChange={(e) => setNeedsDisc(e.target.checked)} />
+              {t('fNeedsDisc')}
+            </label>
+          </div>
+          <div className="form-grid">
+            <Field label={t('fDependsOn')} hint={t('fDependsOnHint')}>
+              <ReqPicker list={depCandidates} selected={depIds} onToggle={(id) => setDependsOn((l) => toggle(l, id))} emptyText={t('noOthers')} t={t} />
+            </Field>
+            <Field label={t('fCoRequire')} hint={t('fCoRequireHint')}>
+              <ReqPicker list={coCandidates} selected={coIds} onToggle={(id) => setCoRequire((l) => toggle(l, id))} emptyText={t('noOthers')} t={t} />
+            </Field>
+          </div>
           <Field label={t('fRemarks')}>
             <textarea className="textarea" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </Field>
@@ -1117,6 +1349,64 @@ function RequisitionForm({ snapshot, mode, fixedDept, initial, canSave, onCancel
         </div>
       </CardBody>
     </Card>
+  );
+}
+
+/** Tick-list of other requisitions (sequence / joint-block links). */
+function ReqPicker({ list, selected, onToggle, emptyText, t }: { list: Requisition[]; selected: string[]; onToggle: (id: string) => void; emptyText: string; t: TFn }) {
+  if (!list.length) return <div className="small muted">{emptyText}</div>;
+  return (
+    <div className="stack" style={{ gap: 2, maxHeight: 168, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 8, padding: '4px 8px' }}>
+      {list.map((x) => (
+        <label key={x.id} className="check small" style={{ alignItems: 'flex-start' }}>
+          <input type="checkbox" checked={selected.includes(x.id)} onChange={() => onToggle(x.id)} />
+          <span>
+            <span className="mono">{x.no}</span> <span className="tiny muted">· {DEPT_LABEL[x.dept].short} · {WT[x.workType]?.label ?? x.workType} · {x.line} {kmRange(x.startKm, x.endKm)} · {t(`st_${x.status}` as Key)}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** What the optimiser receives for a requisition (select.requisitionInjectSpec), in plain words. */
+function PlannerPlan({ req: r, snapshot, reqById, weights }: { req: Requisition; snapshot: Snapshot; reqById: Map<string, Requisition>; weights: { preference?: number } }) {
+  const t = useT(strings);
+  const rules = snapshot.result.rules;
+  const known = r.status === 'ACCEPTED' ? null : new Set(snapshot.tasks.map((x) => x.id));
+  const spec = requisitionInjectSpec(r, { planStart: snapshot.planStart, corridorId: r.corridorId, knownTaskIds: known });
+  const wt = WT[r.workType] as (WorkTypeDef & { setupMin?: number; clearanceMin?: number }) | undefined;
+  const total = spec.durationMin ? spec.durationMin + (wt?.setupMin ?? 0) + (wt?.clearanceMin ?? 0) : null;
+  const weekEnd = addDaysIso(snapshot.planStart, snapshot.result.weekly.occupancy.length - 1);
+  const day = preferredDayOf(r.preferredDate, snapshot.planStart, snapshot.result.weekly.occupancy.length);
+  const kindKey: Record<string, Key> = { TRAFFIC: 'bt_TRAFFIC', POWER: 'bt_POWER', 'TRAFFIC + POWER': 'bt_INTEGRATED', DISCONNECTION: 'bt_DISCONNECTION' };
+  const reqNo = (sid: string) => {
+    const id = sid.replace(/^REQ\//, '');
+    return reqById.get(id)?.no ?? sid;
+  };
+  const replacedTask = spec.replacesTaskId ? snapshot.tasks.find((x) => x.id === spec.replacesTaskId) : undefined;
+  const lines: string[] = [
+    spec.durationMin && total !== null ? t('pDuration', { dur: duration(spec.durationMin), total: duration(total) }) : t('pDurationCal'),
+    day !== undefined ? t('pDay', { date: dateLabel(addDaysIso(snapshot.planStart, day)), d: day + 1, w: weights.preference ?? 0 }) : r.preferredDate ? t('pDayOutside', { date: dateLabel(r.preferredDate), a: dateLabel(snapshot.planStart), b: dateLabel(weekEnd) }) : t('pDayNone'),
+    spec.preferredWindow === 'night' ? t('pWindowNight', { a: hhmm(rules.nightWindow[0]), b: hhmm(rules.nightWindow[1]) }) : spec.preferredWindow === 'day' ? t('pWindowDay') : t('pWindowAny'),
+    spec.machine ? t('pMachine', { m: MT[spec.machine]?.label ?? spec.machine }) : t('pNoMachine'),
+    t('pKind', { kind: t(kindKey[spec.blockKind ?? 'TRAFFIC'] ?? 'bt_TRAFFIC'), extra: `${spec.requires?.includes('POWER_BLOCK') ? t('pKindPower') : ''}${spec.requires?.includes('DISCONNECTION') ? t('pKindDisc') : ''}` }),
+    ...(spec.dependsOn?.length ? [t('pDepends', { list: spec.dependsOn.map(reqNo).join(', ') })] : []),
+    ...(spec.coRequireWith?.length ? [t('pCo', { list: spec.coRequireWith.map(reqNo).join(', ') })] : []),
+    spec.replacesTaskId ? t('pReplaces', { id: spec.replacesTaskId, label: replacedTask ? ` (${replacedTask.label}, ${kmRange(replacedTask.startKm, replacedTask.endKm)})` : '' }) : r.sourceTaskId ? t('pReplacesGone', { id: r.sourceTaskId }) : t('pNew'),
+  ];
+  return (
+    <div data-tour="requisition-planner">
+      <div className="section-title row">
+        {t('plannerTitle')} <SimLabel kind="solver" short />
+      </div>
+      <div className="tiny muted" style={{ marginBottom: 6 }}>{t('plannerSub')}</div>
+      <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+        {lines.map((l) => (
+          <li key={l}>{l}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

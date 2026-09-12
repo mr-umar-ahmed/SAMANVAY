@@ -17,8 +17,9 @@ import type { Corridor, Dept, InjectSpec, Line, RunLine } from '../../engine/typ
 import { LANGS, useT } from '../../i18n';
 import { common } from '../../i18n/common';
 import { DEPT_LABEL, clamp, nowMinuteIST, timeAgo } from '../../lib/format';
+import { SEVERITY_THRESHOLDS } from '../../lib/triage';
 import { deptForCategory, useAppStore, type HazardReport, type ReportCategory } from '../../store/useAppStore';
-import { Badge, Callout, DeptBadge, Drawer, EmptyState, Field, KeyValue, Modal, Segmented, StatusBadge, type Tone } from '../ui';
+import { Badge, Callout, DeptBadge, Drawer, EmptyState, Field, KeyValue, Modal, SectionTitle, Segmented, StatusBadge, type Tone } from '../ui';
 import { SimLabel, Timeline, loadPhoto } from '../ui/extras';
 import { MiniMap } from '../viz/CorridorMap';
 
@@ -143,6 +144,19 @@ const strings = {
     closedHint: 'This report is closed. No further action.',
     reasonDefault: 'Hazard report {id}: {desc}',
     replanReason: 'incident converted',
+    sevAuto: 'Computed from the report and the timetable',
+    sevReporter: 'Chosen by the reporter',
+    sevNone: 'No severity recorded.',
+    sevRule: 'Points table: high at {h} points or more, medium at {m} or more, else low.',
+    sevReasons: 'Why this severity (rule table, as recorded)',
+    ruleBased: 'Rule-based, not a model',
+    suggestTitle: 'Category check',
+    suggestLine: 'Suggested category: {cat} (keyword match: {words})',
+    suggestDiffers: 'The reporter chose {cur}. Re-routing changes the department only; the recorded category stays.',
+    suggestSameDept: 'Already routed to {dept}.',
+    suggestNoDept: 'This category goes to Control for triage.',
+    routeTo: 'Route to {dept}',
+    suggestRouteNote: 'Keyword suggestion: {cat} ({words})',
   },
   hi: {
     title: 'खतरा रिपोर्ट',
@@ -249,6 +263,19 @@ const strings = {
     closedHint: 'यह रिपोर्ट बंद है। आगे कोई कार्रवाई नहीं।',
     reasonDefault: 'खतरा रिपोर्ट {id}: {desc}',
     replanReason: 'incident converted',
+    sevAuto: 'रिपोर्ट और समय-सारणी से गणना',
+    sevReporter: 'रिपोर्टकर्ता द्वारा चुनी गई',
+    sevNone: 'कोई गंभीरता दर्ज नहीं।',
+    sevRule: 'अंक तालिका: {h} या अधिक अंक पर उच्च, {m} या अधिक पर मध्यम, अन्यथा कम।',
+    sevReasons: 'यह गंभीरता क्यों (नियम तालिका, जैसे दर्ज हुई)',
+    ruleBased: 'नियम-आधारित, मॉडल नहीं',
+    suggestTitle: 'श्रेणी जाँच',
+    suggestLine: 'सुझाई गई श्रेणी: {cat} (कीवर्ड मेल: {words})',
+    suggestDiffers: 'रिपोर्टकर्ता ने {cur} चुना। पुनः रूट से केवल विभाग बदलता है; दर्ज श्रेणी वही रहती है।',
+    suggestSameDept: 'पहले से {dept} को रूट।',
+    suggestNoDept: 'यह श्रेणी ट्रायेज हेतु नियंत्रण को जाती है।',
+    routeTo: '{dept} को रूट करें',
+    suggestRouteNote: 'कीवर्ड सुझाव: {cat} ({words})',
   },
 } as const;
 
@@ -448,6 +475,20 @@ export function ReportDrawer({ reportId, onClose }: { reportId: string | null; o
     setMode(null);
   };
 
+  /* ── rule-based severity + keyword category suggestion (lib/triage) ── */
+  const sevLabel = report.severity === 'low' ? t('sevLow') : report.severity === 'medium' ? t('sevMedium') : t('sevHigh');
+  const sug = report.suggestedCategory && report.suggestedCategory.category !== report.category ? report.suggestedCategory : null;
+  const sugCat = sug ? t(CAT_KEY[sug.category as ReportCategory]) : '';
+  const sugDept = sug ? deptForCategory(sug.category as ReportCategory) : null;
+  // the store's 'reroute' changes the department only; offered where the action bar already re-routes (Control, division) and to planning triage
+  const rerouteOk = isControl ? controlOk : isDivision ? divisionOk || triage : isPlanning ? planningOk : false;
+  const offerRoute = !!sug && !!sugDept && sugDept !== report.dept && !closed && !isTask && (isControl || isDivision || isPlanning);
+  const doRouteSuggested = () => {
+    if (!sug || !sugDept) return;
+    triageReport(report.id, 'reroute', { dept: sugDept, note: t('suggestRouteNote', { cat: sugCat, words: sug.matched.join(', ') }) });
+    toast({ title: t('reroutedToast', { id: report.id, dept: deptText(sugDept) }), tone: 'info' });
+  };
+
   /* ── timeline ── */
   const histLabel = (action: string) => {
     const key = `h${action}` as keyof typeof strings.en;
@@ -524,7 +565,7 @@ export function ReportDrawer({ reportId, onClose }: { reportId: string | null; o
           <StatusBadge status={report.status} />
           {report.dept ? <DeptBadge dept={report.dept} /> : <Badge tone="warn">{t('routingControl')}</Badge>}
           <Badge tone="outline">{sourceLabel}</Badge>
-          {report.severity && <Badge tone={SEV_TONE[report.severity]}>{report.severity === 'low' ? t('sevLow') : report.severity === 'medium' ? t('sevMedium') : t('sevHigh')}</Badge>}
+          {report.severity && <Badge tone={SEV_TONE[report.severity]} title={report.severityAuto ? t('sevAuto') : t('sevReporter')}>{sevLabel}</Badge>}
           {report.seeded && <SimLabel kind="seededRecords" />}
         </>
       }
@@ -585,6 +626,54 @@ export function ReportDrawer({ reportId, onClose }: { reportId: string | null; o
             <div className="tiny muted mt">{t('routingNote')}</div>
           </Callout>
         </div>
+
+        {/* severity (reporter's choice or the rule-based points table) */}
+        <div>
+          <SectionTitle right={report.severityAuto ? <span className="tiny muted">{t('ruleBased')}</span> : undefined}>{t('severity')}</SectionTitle>
+          {report.severity ? (
+            <div className="stack" style={{ gap: 8 }}>
+              <div className="row-wrap" style={{ gap: 8 }}>
+                <Badge tone={SEV_TONE[report.severity]}>{sevLabel}</Badge>
+                <span className="small muted">{report.severityAuto ? t('sevAuto') : t('sevReporter')}</span>
+              </div>
+              {report.severityAuto && <div className="tiny muted">{t('sevRule', { h: SEVERITY_THRESHOLDS.high, m: SEVERITY_THRESHOLDS.medium })}</div>}
+              {report.severityReasons && report.severityReasons.length > 0 && (
+                <div>
+                  <div className="small strong">{t('sevReasons')}</div>
+                  <ul className="small" style={{ margin: '4px 0 0', paddingLeft: 18 }} lang="en">
+                    {report.severityReasons.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="small muted">{t('sevNone')}</div>
+          )}
+        </div>
+
+        {/* keyword category suggestion, when it differs from the reporter's category */}
+        {sug && (
+          <div>
+            <SectionTitle right={<span className="tiny muted">{t('ruleBased')}</span>}>{t('suggestTitle')}</SectionTitle>
+            <Callout tone="neutral">
+              <div>{t('suggestLine', { cat: sugCat, words: sug.matched.join(', ') })}</div>
+              <div className="tiny muted mt">{t('suggestDiffers', { cur: catLabel })}</div>
+              {!sugDept ? (
+                <div className="tiny muted mt">{t('suggestNoDept')}</div>
+              ) : sugDept === report.dept ? (
+                <div className="tiny muted mt">{t('suggestSameDept', { dept: deptText(sugDept) })}</div>
+              ) : offerRoute ? (
+                <div className="mt">
+                  <button className="btn btn-sm" onClick={doRouteSuggested} disabled={!rerouteOk} title={rerouteOk ? undefined : t('noCap')}>
+                    <ArrowRightLeft /> {t('routeTo', { dept: deptText(sugDept) })}
+                  </button>
+                </div>
+              ) : null}
+            </Callout>
+          </div>
+        )}
 
         {/* next train */}
         <div>
